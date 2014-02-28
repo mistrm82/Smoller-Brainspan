@@ -1,0 +1,71 @@
+Smoller Brainspan Analysis
+========================================================
+
+
+```{r setup, echo=FALSE}
+opts_chunk$set(tidy=TRUE, echo=TRUE, highlight=TRUE, figalign='center', fig.height=9, fig.width=9, out.width='800px', message=FALSE, error=TRUE, warning=FALSE, cache=FALSE)
+
+# Setup report details
+clientname="Erin Dunn"
+clientemail="erindunn@pngu.mgh.harvard.edu"
+lablocation="MGH"
+analystname="Meeta Mistry"
+analystemail="mmistry@hsph.harvard.edu"
+```
+
+Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
+
+> It doesn't look like BrainCloud is an ideal dataset because of the issues related to the PMI. Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner in that new dataset. 
+
+## Workflow: 
+* grab the BrainSpan data set and metadata
+* re-run the QC of the metadata and basic expression analysis 
+* run STEM on one brain region only
+
+## Setup
+
+### Bioconductor and R libraries used
+
+```{r libraries, echo=TRUE}
+library(ggplot2)
+library(gtable)
+library(scales)
+library(RColorBrewer)
+library(GEOquery)
+library(affy)
+library(arrayQualityMetrics)
+library(reshape)
+library(xtable)
+library(ruv)
+library(limma)
+library(Biobase)
+library(gridExtra)
+
+```
+
+### Get variables
+- get base directory for analyses
+- specify data and results directories
+- specify column headers used in metadata file
+
+
+```{r variables, echo=TRUE}
+# Setup directory variables
+baseDir <- '.'
+dataDir <- file.path(baseDir, "data")
+metaDir <- file.path(dataDir, "meta")
+resultsDir <- file.path(baseDir, "results")
+```
+
+
+### Load the expression data
+
+```{r dataimport GEO, echo=TRUE}
+
+# Load GEO data
+
+# Affymetrix GeneChip Mouse Genome 430 2.0 microarrays. Array data was processed using the Affy and gcrma packages
+gse1 <- getGEO('GSE9202', destdir=file.path(dataDir, 'geo'))
+```
+
+
