@@ -20,7 +20,7 @@ Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact 
 ## Workflow: 
 * grab the BrainSpan data set and metadata
 * re-run the QC of the metadata and basic expression analysis 
-* run STEM on one brain region only
+* isolate one brain region only: Orbitofrontal Cortex and Amygdala
 
 ## Setup
 
@@ -40,7 +40,10 @@ library(ruv)
 library(limma)
 library(Biobase)
 library(gridExtra)
+library(stringr)
+library(knitr)
 
+source("http://dl.dropboxusercontent.com/u/4253254/Resources/functions.r")
 ```
 
 ### Get variables
@@ -60,12 +63,158 @@ resultsDir <- file.path(baseDir, "results")
 
 ### Load the expression data
 
-```{r dataimport GEO, echo=TRUE}
+```{r dataimport GEO, echo=TRUE, eval=FALSE}
 
 # Load GEO data
+gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matrix.txt.gz'))
+gse_probe <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5188_series_matrix.txt.gz'))
+```
 
-# Affymetrix GeneChip Mouse Genome 430 2.0 microarrays. Array data was processed using the Affy and gcrma packages
-gse1 <- getGEO('GSE9202', destdir=file.path(dataDir, 'geo'))
+
+### Extract metadata and relevant categories
+
+```{r metadata extract, eval=FALSE, echo=FALSE}
+names(pData(gse_gene))
+pheno_gene <- pData(gse_gene)[,c(8,10:18)]
+
+for (c in 2:ncol(pheno_gene)){
+  var <- as.character(pheno_gene[,c])
+  var.split <- strsplit(var, ":")
+  getlist<- sapply(var.split, "[[", 2)
+  getlist <- str_trim(getlist)
+  pheno_gene[,c] <- getlist
+}
+
+pheno_gene <- cbind(sapply(pheno_gene[1:7], factor), pheno_gene[,8:10])
+colnames(pheno_gene) <-c ("SampleName", "BrainCode", "BrainRegion", "Hemisphere", "Sex", "Age",
+                          "Stage", "PMI", "pH", "RIN")
+
+write.table(pheno_gene, file=file.path(metaDir, 'brainspan_samples_metadata.txt'), sep="\t", quote=F)
+```
+
+```{r metadata from file, echo=TRUE}
+pheno_gene <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), row.names=1)
+meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)
+  
+# Subset data by region and hemisphere
+meta_ofc <- pheno_gene[which(pheno_gene$BrainRegion == "OFC" & pheno_gene$Hemisphere == "R"),]
+meta_ofc$PMI <- as.numeric(as.character(meta_ofc$PMI))
+meta_ofc$Stage <- factor(meta_ofc$Stage)
+meta_amy <- pheno_gene[which(pheno_gene$BrainRegion == "AMY" & pheno_gene$Hemisphere == "R"),]
+```
+
+
+### Data exploration: focus for now OFC
+Phenotype data is loaded in from which we can isolate our two brain regions of interest. In total there are `r length(unique(pheno_gene$BrainCode))` donors, and from each multiple samples were taken from various brain regions. 
+
+Exploring the metadata for consistency, and generating a quick overview:
+
+```{r testMeta, echo=TRUE, results='asis'}
+
+# Gender distribution
+gender <- rbind(table(meta_ofc$Sex), table(meta_amy$Sex))
+row.names(gender) <- c("Orbitofrontal cortex", "Amygdala")
+kable(gender, format="html")
+
+# Age table
+age.table <-as.character(unique(meta_donor$Period))
+age.table <- strsplit(age.table, ",")
+age.table <- do.call("rbind", age.table)
+row.names(age.table) <- rep("", nrow(age.table))
+colnames(age.table) <- c("Stage", "Description")
+kable(data.frame(age.table), format="html", row.names=FALSE)
+
+# Age distribution
+ggplot(meta_ofc, aes(Stage)) +
+  geom_bar() +
+  ggtitle('Orbitofrontal Cortex: Age distribution') + 
+  xlab('Developmental Stage') +
+  ylab('Number of Samples') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=0,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+
+
+# pH measurements
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=pH, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: pH levels') +
+  xlab('Stage') +
+  guides(fill=FALSE) +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+
+# Time between death and sample collection; remove non-numeric values
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=PMI, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: Postmortem Intervals') +
+  xlab('Stage') +
+  ylab('Postmortem Interval') +
+  guides(fill=FALSE) +
+  theme(legend.position="none",
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+
+# RNA Integrity
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=RIN, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: RIN') +
+  xlab('Stage') +
+  ylab('Postmortem Interval') +
+  guides(fill=FALSE) +
+  theme(legend.position="none",
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+```
+
+As we have seen with the Braincloud data, there is a correlation observed with devleopemental stage and both RIN and PMI. The younger age groups tend to have shorter PMIs and higher RNA integrity, and an apposite effect is observed with the older age groups. Not surprising, fetal samples are more likely to have been obtained faster. Next step, check what effect this might have on the expression data.
+
+### Quality Control
+
+ArrayQualityMetrics QC report for [GSE9202](./results/report_raw_GSE9202/index.html)
+
+```{r organize eset, echo=FALSE}
+# Add data
+data_ofc <- exprs(gse_gene) 
+data_ofc <-data_ofc[,which(colnames(data_ofc) %in% rownames(meta_ofc))]
+eset.ofc <- new("ExpressionSet", exprs=data_ofc)
+
+# Add metadata
+fetal <- rep("NA", nrow(meta_ofc))
+fetal[which(as.numeric(meta_ofc$Stage) <= 7)] <- "Fetal"
+fetal[which(as.numeric(meta_ofc$Stage) > 7)] <- "Postnatal"
+fetal <- factor(fetal)
+meta_new <-cbind(meta_ofc, fetal)
+
+pData(eset.ofc) <- meta_new
+fData (eset.ofc) <- fData(gse_gene)
+```
+
+
+```{r QC_report, echo=TRUE, eval=FALSE}
+
+ arrayQualityMetrics(expressionset=eset.ofc, intgroup=c('fetal'),
+                     outdir='./results/report_raw_OFC2', force=TRUE,  do.logtransform=TRUE)
+```
+
+
+### Clustering of data 
+
+```{r dendrogram}
+library(ggdendro)
+clust.dat <- t(data_ofc)
+rownames(clust.dat) <- sapply(meta_ofc$Stage, function(x) age.table[which(age.table[,1] == x),2])
+hc <- hclust(dist(clust.dat))
+
+ggdendrogram(hc, rotate = TRUE, size = 4, theme_dendro = FALSE) +
+  xlab('') + ylab('') +
+    theme(axis.text = element_text(size = rel(1.25)))
+
 ```
 
 
