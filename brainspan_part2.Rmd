@@ -1,0 +1,403 @@
+---
+title: "Smoller Brainspan Part 2: Updated GEO data"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_depth: 4
+    fig_caption: true
+    fig_width: 8
+    fig_height: 6
+author: "Meeta Mistry"
+---
+
+```{r setup, echo=FALSE}
+
+# Setup report details
+clientname="Erin Dunn"
+clientemail="erindunn@pngu.mgh.harvard.edu"
+lablocation="MGH"
+analystname="Meeta Mistry"
+analystemail="mmistry@hsph.harvard.edu"
+```
+
+Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
+
+Test for differential gene expression between brain samples taken at different ages as part of the [BrainSpan](http://www.brainspan.org/) project.There are two sources of Brainspan data: 1) link on Brainspan website 2) GEO submission which is associated with the publication [Kang et al, Nature 2011](http://www.ncbi.nlm.nih.gov/pubmed/22031440). The data available for download on the Brainspan website is missing a large number of samples compared to the GEO dataset. Correspondence with Ying Zhu from Nenad Sestan's lab provided us with instruction to use the full dataset on GEO as opposed to the data on Brainspan. This GEO entry was updated since Part I report and the most recent version of data can be downloaded from GEO [GSE25219](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). Data used in this report was downloaded from GEO on 10/09/2014.
+
+> RNA from 269 human prefrontal cortex samples ranging from fetal development (negative ages) through aging (80 years) were analyzed on custom 2-color microarrays from the National Human Genome Research Institute (NHGRI) microarray core facility using a reference RNA comprised of a pool of all samples.
+
+## Workflow
+Starting from the pre-'cleaned' data from GEO, the dataset contains samples from 16 different brain regions. We focused on the orbitofrontal cortex samples for the remaining analyses in this report. We implement methods to remove the effects of confounders by applying various methods which include isva best described in [Teschendorff A.E. et al., 2011](http://bioinformatics.oxfordjournals.org/content/27/11/1496.long) and RUV (remove unwanted variation) a method described in more detail [Gagnon-Bartsch J.A., 2011](http://biostatistics.oxfordjournals.org/content/13/3/539.short). ISVA is not inlcuded in the final html report but code remains in the markdown file.
+
+## Setup
+
+### Bioconductor and R libraries used
+
+```{r libraries, echo=TRUE}
+loadlibs <- function(){
+library(ggplot2)
+library(gtable)
+library(scales)
+library(RColorBrewer)
+library(GEOquery)
+library(affy)
+library(arrayQualityMetrics)
+library(reshape)
+library(xtable)
+library(isva)
+library(limma)
+library(Biobase)
+library(gridExtra)
+library(CHBUtils)
+library(png)
+library(stringr)
+library(dplyr)
+library(ruv)
+}
+suppressPackageStartupMessages(loadlibs())
+```
+
+### Set variables
+```{r variables, echo=TRUE}
+# Setup directory variables
+baseDir <- '.'
+dataDir <- file.path(baseDir, "data")
+metaDir <- file.path(dataDir, "meta")
+resultsDir <- file.path(baseDir, "results")
+#covarsfilename <- 'covdesc.txt'
+```
+
+## Load the expression data
+
+```{r dataimport GEO}
+
+# Load GEO data
+gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matrix.txt.gz'))
+```
+
+## Load the metadata and extract OFC expression data
+
+```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE}
+pheno_gene <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), row.names=1)
+meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)
+  
+# Subset data by region and hemisphere
+meta_ofc <- pheno_gene[which(pheno_gene$BrainRegion == "OFC" & pheno_gene$Hemisphere == "R"),]
+meta_ofc$PMI <- as.numeric(as.character(meta_ofc$PMI))
+meta_ofc$Stage <- factor(meta_ofc$Stage)
+
+# Add data
+data_ofc <- exprs(gse_gene) 
+data_ofc <-data_ofc[,which(colnames(data_ofc) %in% rownames(meta_ofc))]
+eset.ofc <- new("ExpressionSet", exprs=data_ofc)
+
+# Add metadata
+fetal <- rep("NA", nrow(meta_ofc))
+stage.num <- as.numeric(as.character(meta_ofc$Stage))
+fetal[which(stage.num <= 7)] <- "Fetal"
+fetal[which(stage.num > 7)] <- "Postnatal"
+fetal <- factor(fetal)
+meta_new <-cbind(meta_ofc, fetal)
+meta_new$Stage <- stage.num
+
+meta_new <- droplevels(meta_new)
+pData(eset.ofc) <- droplevels(meta_new)
+fData (eset.ofc) <- fData(gse_gene)
+```
+
+```{r, echo=FALSE, fig.align='center'}
+
+# Age distribution
+ggplot(meta_new, aes(factor(Stage), fill=fetal)) +
+  geom_bar() +
+  ggtitle('Orbitofrontal Cortex: Age distribution') + 
+  xlab('Developmental Stage') +
+  ylab('Number of Samples') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=0,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+
+# RIN distribution
+ggplot(meta_new, aes(x=factor(Stage), y=RIN, fill=fetal)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: RIN') +
+  xlab('Stage') +
+  ylab('RIN ') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=0,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+```
+
+## Quality Control changes from new and old GEO version
+The results below compare the QC for the orbitofrontal cortex data between the old version of the GEO data we downloaded - described in Part 1 - with the QC data we have in the most recent version.  We did this to get a better understanding of how the expression data may have changed from the previous version.  The left hand plot shows shows a false color heatmap of the distances between arrays in the old version. Patterns in this plot indicate clustering of the arrays by fetal and postnatal age with the exception of two samples. The right hand plot shows the same plot using the current version of the data, where we observe the outliers no longer exist. There is definitely some change in the data as samples cluster somewhat differently, although a bit unsure of the source of change. Regardless of this small change we will continue using the current version.
+
+```{r qc-compare, fig.align='center', echo=FALSE, fig.width=11}
+
+img2 <- readPNG("./results/report_OFC_march2014/hm.png")
+img3 <- readPNG("./results/report_OFC/hm.png")
+grid.arrange(rasterGrob(img2), rasterGrob(img3), ncol=2)
+```
+
+
+```{r isva, fig.align='center', warning=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+
+## ISVA: Differential expression analysis
+# It makes sense to model the effect of confounding factors on the data as statistically independent random variables, as it better reflects the way the confounding noise is generated. This requires them to be uncorrelated with the primary variable of interest in a non-linear fashion, a stronger condition than the _linear_ uncorrelatedness imposed by an SVD. In order to model CFs as statistically independent variables, isva uses independent component analysis (ICA). Since we are using Stage as an ordinal factor (a special case of categorical), it is going to be problematic to have Stages with only one sample. Therefore we will remove samples from Stages 9 and 10. Alot of differentially expressed genes!
+
+# Remove single sample stages
+remove <- which(meta_new$Stage == 9 | meta_new$Stage == 10)
+meta.isva <- meta_new[-remove,]
+data.isva <- data_ofc[,-remove]
+  
+# Idenitify confounding variables
+cf.m <- meta.isva[,c('PMI', 'RIN')]
+factor.log <- as.logical(rep("FALSE",2))
+diseaseStage <- ordered(meta.isva$Stage, levels=c(2:8, 12:15))
+
+# Run ISVA
+isva.res <- DoISVA(data.isva, diseaseStage, cf.m = cf.m, factor.log, th=0.001)
+hist(isva.res$spv, main="P-value distribution from isva", xlab="P-value", col="grey", border=F)
+```
+
+
+```{r topPlot, echo=FALSE, fig.align='center', echo=FALSE, eval=FALSE}
+
+### Comparing the top expression changes with age to evaluate effects on PMI 
+# The isava  method generates a very large number of significant genes (6118 genes; FDR=0.001). The next step is to evaluate how effectively the isva has removed confounding effects, leaving us with only age-related changes. Below we have taken the top nine genes from the isva result and plotted expression against Age. In the second panel the same genes are plotted to evaluate expression change with PMI. The expression change is almost identical - ordinal can be a special case of continuous, _if_ the categories are equally spaced or perfectly ordered.  But in our case, the categories or stages are not equally spaced (i.e., there's not a one unit or some other consistent unit difference between stage 1 and stage 2) so this is not modeled correctly (some top genes don't even show change).
+
+# Get top genes from sorted p-value list
+top <- which(isva.res$rk <= 9)
+topSub <- data_ofc[top, ]
+
+# Merge with phenotype information
+df <- melt(topSub)
+df <- merge(df, meta_ofc, by.x='X2', by.y='row.names')
+
+
+p1 <- ggplot(df, aes(x=as.numeric(Stage), y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = unit(c(1, 0, 1, 1), "lines")) + 
+  ggtitle('Age') + 
+  ylab('Expression values')
+
+p2 <- ggplot(na.omit(df), aes(x=PMI, y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title = element_blank(),  
+        axis.text.y = element_blank(),
+        plot.background = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.margin = unit(c(1, 1, 1, 0), "lines")) + 
+  ggtitle('Postmortem Interval')
+
+# Set side-by-side
+gt1 <- ggplot_gtable(ggplot_build(p1))
+gt2 <- ggplot_gtable(ggplot_build(p2))
+newWidth = unit.pmax(gt1$widths[2:3], gt2$widths[2:3])
+
+# Set new size
+gt1$widths[2:3] = as.list(newWidth)
+gt2$widths[2:3] = as.list(newWidth)
+
+# Arrange
+grid.arrange(gt1, gt2, ncol=2)
+
+```
+
+## RUV: remove unwanted variation
+We next applied RUV to remove unwanted variation in the data - namely to see if we could remove the effects of confounding variables RIN and PMI confounding effects. The strategy with RUV is to use negative control genes and identify surrogate variables based on the expression of those genes. Negative control genes are genes whose expression levels are known a priori to be truly unassociated with the biological factor of interest.  In other words, genes that we know a prior do not change in their expression over the course of development. 
+
+Our original strategy was to use housekeeping genes as provided in [Eisenberg E., and Levanon E.Y.](http://www.ncbi.nlm.nih.gov/pubmed/12850439) as our list of negative control genes.  However, the diganostic plots from an RUV starter anlaysis did not differ between negative control genes and all other genes (report can be found [here](./ruv_hk_full/index.html) ). This meant one of two things; either the unwanted variation really is extremely correlated with X, or the negative controls aren't actually negative controls and they're picking up some biology along with the unwanted factors. We assumed it is the latter, and searched for a better set of negative control genes.
+
+Our current/next strategy, was to generate a list of negative control genes by trying to identify a  list of genes that are associated with our unwanted factors (RIN and PMI) but are unaffected by age. Doing so requires using a cohort in which age is not correlated with either RIN or PMI. For this we used only postnatal samples (Stage 8 or higher), and used liner modeling to identify genes differentially expressed with RIN or PMI.
+
+### Using only postnatal samples RIN and PMI show no correlation with age/stage
+Below we have plotted Stage on the x-axis and PMI and RIN on the y-axis for each sample in the postnatal cohort. We observe no correlation between the confounding variables and Stage; so we know that any expression changes we do extract from differential expression analysis for each factor are _less_likely_to_be_confounded_with_age_.
+
+```{r rin-pmi, echo=TRUE, eval=TRUE, fig.align='center'}
+
+# Keep only samples >= Stage 8
+samples <- row.names(pData(eset.ofc))[which(pData(eset.ofc)$Stage >= 8)]
+eset.nc <- eset.ofc[,samples]
+
+# Plot relationship with Age
+p1 <- ggplot(pData(eset.nc), aes(x=Stage, y=PMI)) + 
+  geom_point(shape=1)  +
+  geom_smooth(method=lm) +  # Add linear regression line
+  ggtitle('PMI') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+p2 <- ggplot(pData(eset.nc), aes(x=Stage, y=RIN)) + 
+  geom_point(shape=1)  +
+  geom_smooth(method=lm) +  # Add linear regression line
+  ggtitle('RIN') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+### Look for genes associated with these unwanted factors
+We used linear modeling to identify genes siginficantly associated with RIN and PMI in the postnatal cohort. Each variable was analyzed independently and p-values were extracted with distributions are plotted below. The uniform distribution on the left indicates that there are no  genes particulalry sensitive, however there are some changes associated with RIN.
+
+```{r negctl, fig.align='center', fig.width=12}
+# model PMI
+mod <- model.matrix(~PMI, pData(eset.nc))
+fit<-lmFit(eset.nc, mod)
+fit<-eBayes(fit)
+topPMI<-topTable(fit,coef=2,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+
+p1 <- ggplot(topPMI, aes(x=P.Value)) + 
+  geom_histogram(color="black", fill="grey") +
+  ggtitle('PMI') +
+  xlab('P-value') +
+  ylab('') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+# model RIN
+mod <- model.matrix(~RIN, pData(eset.nc))
+fit<-lmFit(eset.nc, mod)
+fit<-eBayes(fit)
+
+topRIN<-topTable(fit,coef=2,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+p2 <- ggplot(topRIN, aes(x=P.Value)) + 
+  geom_histogram(color="black", fill="grey") +
+  ggtitle('RIN') +
+  xlab('P-value') +
+  ylab('') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+To complement the associations (or lack of) found via linear modeling, we also computed correlations for each gene with RIN and PMI. A histogram of correlation values are plotted below. Correlations with PMI form a narrow distribution centered around zero, indicating that most genes have little or no correlation with PMI. With RIN we see a much broader distribution of correlation values, indicating genes show a higher magnitude of association with RIN.
+
+```{r correlations, fig.align='center', fig.width=15}
+
+cor.PMI <- apply(exprs(eset.nc), 1, function(x){cor(x, pData(eset.nc)$PMI)})
+cor.RIN  <- apply(exprs(eset.nc), 1, function(x){cor(x, pData(eset.nc)$RIN)})
+df <- data.frame(cor.PMI, cor.RIN, row.names=names(cor.PMI))
+
+p1 <- ggplot(df, aes(x=cor.PMI)) + 
+  geom_histogram(color="black", fill="grey") +
+  ggtitle('PMI') +
+  xlab('Correlation') +
+  ylab('') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+p2 <- ggplot(df, aes(x=cor.RIN)) + 
+  geom_histogram(color="black", fill="grey") +
+  ggtitle('RIN') +
+  xlab('Correlation') +
+  ylab('') +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+
+### PCA: check if RIN genes contribute to fetal vs postnatal differences
+We took the top RIN associated genes by selecting the top 50 genes ranked by p-values obtained from linear modeling. We revert back to the expression data from the full cohort (fetal + postnatal) and extract only rows corresponding to our top genes. Using this subset of expression data we perform a PCA as we are interested in finding the directions (components) that maximize the variance in our dataset. We know that using all genes on the array the first PC is expalained by fetal versus postnatal. Using only the top RIN associated genes we still see that, but to a lesser extent. 
+
+```{r pcacheck}
+
+topranked <- which(row.names(exprs(eset.ofc)) %in% row.names(topRIN)[1:50])
+# Check with PCA
+myPca <- prcomp(t(exprs(eset.ofc)[topranked,]))
+
+# Plot first factor of interest
+tmpPCAData <- as.data.frame(myPca$x[,1:5])
+plot(PC2 ~ PC1, data=tmpPCAData, col=c("black", "red")[pData(eset.ofc)[,"fetal"]], 
+     pch=19, main="Negative control genes")
+legend("top", inset=.05, title="", legend=levels(pData(eset.ofc)[,"fetal"]), fill=c('black', 'red'), horiz=FALSE)
+```
+
+### RUV
+The two steps of RUV-2 are: 1) perform factor analysis on the negative control genes to infer the unwanted factors, and 2) perform a simple linear regression of the observed expression levels on the factor of interest. Since we don't really have a healthy mix of PMI and RIN among the patients within each stage, try RUV with just a two group comparison (fetal versus postnatal). We will use the top RIN genes as our negative control genes.
+
+```{r setup-for-RUV, echo=TRUE}
+
+# Get X and Y
+mod <- model.matrix(~fetal, pData(eset.ofc))
+X <- as.matrix(mod[,2])
+Y <- t(exprs(eset.ofc))
+
+# Assign negative control genes
+ctl<-rep("FALSE", nrow(exprs(eset.ofc)))
+ctl[topranked]<-"TRUE"
+ctl<-as.logical(ctl)
+ 
+# Extract gene information into columns
+geneCol <- as.character(fData(eset.ofc)[,'gene_assignment'])
+geneNames <- sapply(geneCol, function(x){strsplit(as.character(x), "//")[[1]][2]})
+geneNames <- str_trim(geneNames)
+geneDesc <- sapply(geneCol, function(x){strsplit(as.character(x), "//")[[1]][3]})
+geneChr <- sapply(geneCol, function(x){strsplit(as.character(x), "//")[[1]][4]})
+geneChr <- str_trim(geneChr)
+geneinfo <- data.frame(geneNames, geneDesc, geneChr, row.names=row.names(fData(eset.ofc)))
+```
+
+```{r ruvstarter, eval=FALSE}
+# A quick first look at the data
+ruv_starter_analysis(Y, X, ctl, geneinfo = t(geneinfo))
+
+# Retry and use kset to indicate specific K
+ruv_starter_analysis(Y, X, ctl, geneinfo = t(geneinfo), kset=c(10:15), do_ruv4 = F, do_ruvinv = F, do_ruvrinv = F)
+```
+
+### Results and interpretation
+Based on the results from the starter analysis we can evaluate the diagnostic plots to determine how well our negative control genes worked. We will reference a few key figures below but the full report can be found [here](./ruv/index.html). 
+
+The cancor plots are mainly useful for giving you a sense of what's going on in the data, and giving you some circumstantial evidence. This plot shows, for each value of K, the square of the first canonical correlation between X and the first K left singular values of Y (black) and Ynegctl (green). It seems at lower K ( < 10 ) is where we see the green curve stay low while the black line jumps up. This indicates that at lower K the negative controls are _less_correlated_ with X (Stage; our primary variable of interest). Whether this means that they are relatively _uninfluenced_ by X is not conclusive.
+
+The cancor^2 of about 0.7 is, by absolute standards, very high. So while our procedure for selecting negative controls helped a bit, they are in fact still quite influenced by X. There's another possible explanation, which is that the negative controls are good, and aren't influenced by X, and the only reason they are correlated with X is because the unwanted variation is itself highly correlated with X.  
+
+```{r cancor-plot, fig.align='center', echo=FALSE}
+imgcancor <- readPNG("./ruv_negctl_full/general/cancor/cancor.png")
+grid.raster(imgcancor)
+```
+
+## Next steps                                 
+* Do we have reason to think that the unwanted variation is highy correlated with X? This is possible if there is very strong confounding between W and X. RIN values correlate with X at 0.5. How high is high?
+* Another method for finding negative control genes is to use genes correlated woth RIN but _not_ correlated with Stage
+* Incorporate positive control genes
+* Try RUV-4.  RUV-2 is pretty sensitive to "bad" negative controls. As for RUV-4, I'd say stick to K=1 or 2, at least for now.
+
+
+```{r ruv-2, echo=FALSE, eval=FALSE}
+
+# RUV-2
+ruv.10 <- RUV2(Y, X, ctl, k=10, Z = 1, v = NULL, fullW = NULL, inputcheck = TRUE)
+
+# Histograms
+hist (ruv.10$p, col="grey", border=F, xlab="P-value", main="RUV2 with Stage as continuous factor")
+
+# Get SVA object
+svaobj<-as.matrix(ruvfit$W)
+
+# Use cleaning function
+regressClean<-function(y,mod, svaobj,P=ncol(mod)) {
+  X=cbind(mod,svaobj) 
+  Hat=solve(t(X)%*%X)%*%t(X) 
+  beta=(Hat%*%t(y))
+  cleany=y-t(as.matrix(X[,-c(1:P)])%*%beta[-c(1:P),])
+  return(cleany)
+}
+
+```
+
+

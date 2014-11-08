@@ -1,0 +1,465 @@
+---
+title: "Smoller Brainspan Part 1: GEO Data Overview"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_depth: 4
+    fig_caption: true
+    fig_width: 8
+    fig_height: 6
+author: "Meeta Mistry"
+---
+
+```{r setup, echo=FALSE}
+
+# Setup report details
+clientname="Erin Dunn"
+clientemail="erindunn@pngu.mgh.harvard.edu"
+lablocation="MGH"
+analystname="Meeta Mistry"
+analystemail="mmistry@hsph.harvard.edu"
+```
+
+Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
+
+> It doesn't look like BrainCloud is an ideal dataset because of the issues related to the PMI. Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner in that new dataset. 
+
+## Workflow: 
+* grab the BrainSpan data from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) and metadata
+* focus on OFC; re-run the QC  on normalized and raw data
+* differential expression analysis
+
+## Setup
+
+### Bioconductor and R libraries used
+
+```{r libraries, echo=TRUE}
+library(ggplot2)
+library(gtable)
+library(scales)
+library(RColorBrewer)
+library(GEOquery)
+library(affy)
+library(arrayQualityMetrics)
+library(reshape)
+library(xtable)
+library(ruv)
+library(limma)
+library(Biobase)
+library(gridExtra)
+library(stringr)
+library(knitr)
+library(png)
+library(sva)
+library(dplyr)
+library(CHBUtils)
+```
+
+### Get variables
+- get base directory for analyses
+- specify data and results directories
+- specify column headers used in metadata file
+
+
+```{r variables, echo=TRUE}
+# Setup directory variables
+baseDir <- '.'
+dataDir <- file.path(baseDir, "data")
+metaDir <- file.path(dataDir, "meta")
+resultsDir <- file.path(baseDir, "results")
+```
+
+
+## Load the expression data
+Using RMA background corrected data, with quantile normalization and log2-transformation. The median of all probe sets within one gene (transcript cluster) was used as the estimate of gene expression.  From the supplement '...a total of 17,565 mainly protein coding genes were surveyed'
+
+```{r dataimport GEO, echo=TRUE, warning=FALSE, message=FALSE}
+
+# Load GEO data
+gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matrix.txt.gz'))
+# gse_probe <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5188_series_matrix.txt.gz'))
+```
+
+
+## Extract metadata and relevant categories
+
+```{r metadata extract, eval=FALSE, echo=FALSE}
+names(pData(gse_gene))
+pheno_gene <- pData(gse_gene)[,c(8,10:18)]
+
+for (c in 2:ncol(pheno_gene)){
+  var <- as.character(pheno_gene[,c])
+  var.split <- strsplit(var, ":")
+  getlist<- sapply(var.split, "[[", 2)
+  getlist <- str_trim(getlist)
+  pheno_gene[,c] <- getlist
+}
+
+pheno_gene <- cbind(sapply(pheno_gene[1:7], factor), pheno_gene[,8:10])
+colnames(pheno_gene) <-c ("SampleName", "BrainCode", "BrainRegion", "Hemisphere", "Sex", "Age",
+                          "Stage", "PMI", "pH", "RIN")
+
+write.table(pheno_gene, file=file.path(metaDir, 'brainspan_samples_metadata.txt'), sep="\t", quote=F)
+```
+
+```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE}
+pheno_gene <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), row.names=1)
+meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)
+  
+# Subset data by region and hemisphere
+meta_ofc <- pheno_gene[which(pheno_gene$BrainRegion == "OFC" & pheno_gene$Hemisphere == "R"),]
+meta_ofc$PMI <- as.numeric(as.character(meta_ofc$PMI))
+meta_ofc$Stage <- factor(meta_ofc$Stage)
+# meta_amy <- pheno_gene[which(pheno_gene$BrainRegion == "AMY" & pheno_gene$Hemisphere == "R"),]
+
+region <- group_by(pheno_gene, BrainRegion)
+donors <- summarise(region, donors=n_distinct(BrainCode))
+ggplot(donors, aes(x=BrainRegion, y=donors)) +
+  geom_bar() +
+  ggtitle('Samples per Brain Region') + 
+  xlab('Brain Region') +
+  ylab('Number of Samples') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=45,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+```
+
+
+## Data exploration: focus for now OFC
+Phenotype data is loaded in from which we can isolate our brain region of interest. In total there are `r length(unique(pheno_gene$BrainCode))` donors, from which multiple brain regions were sampled. 
+
+Exploring the metadata for consistency, and generating a quick overview:
+
+```{r testMeta, echo=TRUE, results='asis', fig.align='center'}
+
+# Age table
+age.table <-as.character(unique(meta_donor$Period))
+age.table <- strsplit(age.table, ",")
+age.table <- do.call("rbind", age.table)
+row.names(age.table) <- rep("", nrow(age.table))
+colnames(age.table) <- c("Stage", "Description")
+kable(data.frame(age.table), format="markdown", row.names=FALSE)
+
+# Age distribution
+ggplot(meta_ofc, aes(Stage)) +
+  geom_bar() +
+  ggtitle('Orbitofrontal Cortex: Age distribution') + 
+  xlab('Developmental Stage') +
+  ylab('Number of Samples') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=0,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+
+
+# pH measurements
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=pH, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: pH levels') +
+  xlab('Stage') +
+  guides(fill=FALSE) +
+  theme(plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+
+# Time between death and sample collection; remove non-numeric values
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=PMI, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: Postmortem Intervals') +
+  xlab('Stage') +
+  ylab('Postmortem Interval') +
+  guides(fill=FALSE) +
+  theme(legend.position="none",
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+
+
+# RNA Integrity
+ggplot(na.omit(meta_ofc), aes(x=Stage, y=RIN, fill=Stage)) + 
+  geom_boxplot() + 
+  ggtitle('Orbitofrontal Cortex: RIN') +
+  xlab('Stage') +
+  ylab('RIN') +
+  guides(fill=FALSE) +
+  theme(legend.position="none",
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.5)),
+        axis.text = element_text(size = rel(1.25)))
+```
+
+As we have seen with the Braincloud data, there is a  positive correlation observed with devleopmental stage and PMI and a negative correlations with RIN. Not surprising, fetal samples are more likely to have been obtained faster. The authors also acknolwedge this in the manuscript and account for it by incorporating both as covariates in the model. 
+
+## Quality Control on normalized data
+
+ArrayQualityMetrics QC report for [GSE25219](./results/report_OFC/index.html)
+
+```{r organize eset, echo=FALSE}
+# Add data
+data_ofc <- exprs(gse_gene) 
+data_ofc <-data_ofc[,which(colnames(data_ofc) %in% rownames(meta_ofc))]
+eset.ofc <- new("ExpressionSet", exprs=data_ofc)
+
+# Add metadata
+fetal <- rep("NA", nrow(meta_ofc))
+stage.num <- as.numeric(as.character(meta_ofc$Stage))
+fetal[which(stage.num <= 7)] <- "Fetal"
+fetal[which(stage.num > 7)] <- "Postnatal"
+fetal <- factor(fetal)
+meta_new <-cbind(meta_ofc, fetal)
+meta_new$Stage <- stage.num
+
+pData(eset.ofc) <- meta_new
+fData (eset.ofc) <- fData(gse_gene)
+```
+
+
+```{r QC_report, echo=TRUE, eval=FALSE}
+
+ arrayQualityMetrics(expressionset=eset.ofc, intgroup=c('fetal'),
+                     outdir='./results/report_OFC', force=TRUE,  do.logtransform=FALSE)
+```
+
+
+## Clustering of normalized data 
+
+```{r clusteringDendro, echo=FALSE, fig.align='center', fig.height=12, fig.width=10}
+
+require(ggdendro)
+meta_new$Stage_Name <- sapply(meta_new$Stage, function(x) 
+                              age.table[which(age.table[,1] == x), 2], 
+                              USE.NAMES=FALSE)
+pData(eset.ofc) <- meta_new
+x <-eset.ofc
+
+  meta.x <- pData(x)
+  myDist <- dist(t(exprs(x)))
+  myTree <-hclust(myDist)
+  dhc <- as.dendrogram(myTree)
+  ddata <- dendro_data(dhc, type="rectangle")
+  ddata$labels <- merge(ddata$labels, meta.x, by.x="label", by.y="row.names")
+  ggplot(segment(ddata)) +
+    geom_segment(aes(x=x, y=y, xend=xend, yend=yend)) +
+    theme_dendro() +
+    geom_text(data=label(ddata), aes(x=x, y=y, label=Stage_Name, color=fetal, hjust=-0.1), size=4) +
+    coord_flip() + scale_y_reverse(expand=c(0.2, 50)) +
+    theme(axis.text.x=element_blank(),
+          axis.text.y=element_blank(),
+          axis.title.x=element_blank(),
+          axis.title.y=element_blank()) 
+
+```
+
+
+A false color heatmap of the distance between arrays demonstrates a high degree of similarity among fetal samples and likewise with non-fetal samples. Two fetal samples cluster with postnatal, similar to dendorgram above. Remove these samples.
+```{r image1 , fig.align='center', echo=FALSE}
+
+img1 <- readPNG("./results/report_OFC_march2014//hm.png")
+ grid.raster(img1)
+
+```
+
+Density plots (smoothed histograms) for all arrays follow a similar distribution shape and range.  The shape of distribution is questionable with a fairly heavy right tail.
+
+```{r image2 , fig.align='center', echo=FALSE}
+
+img2 <- readPNG("./results/report_OFC_march2014//dens.png")
+ grid.raster(img2)
+
+```
+
+## Quick check with raw data
+Try checking the quality on a handful of .CEL files and see if we see the same distribution. If not, it might be better to work directly from .CEL files.
+
+```{r raw data, echo=FALSE, results='asis', warning=FALSE, message=FALSE}
+
+# Load libraries
+require(oligo)
+require(pd.huex.1.0.st.v2)
+
+# Get data 
+celFiles <- list.celfiles(file.path(dataDir, 'geo_march2014/CEL'), full.names=TRUE)
+affyRaw <- read.celfiles(celFiles, verbose=FALSE)
+
+# Get metadata
+samples <- sapply(celFiles, function(x){
+                s <- strsplit(x, "/")[[1]][5]
+                strsplit(s, "_")[[1]][1]}, USE.NAMES=FALSE)
+
+covars <- pheno_gene[which(rownames(pheno_gene) %in% samples),]
+covars[,"BrainCode"] <- factor(as.character(covars[,"BrainCode"]))
+colnames(affyRaw) <- rownames(covars)
+pData(affyRaw) <- covars 
+kable(covars, format="markdown")
+
+```
+
+```{r rawQC, eval=FALSE, echo=FALSE}
+arrayQualityMetrics(expressionset=affyRaw,
+                    outdir=file.path(resultsDir, 'report_raw_CEL'), 
+                    force=TRUE, 
+                    do.logtransform=TRUE, 
+                    intgroup=c("BrainCode"))
+```
+
+### QC pre-normalization
+The raw data seems better than what we obtained from GEO, with higher signal intensities. Two samples show a slightly wider distribution and another is skewed to the left. Will check how this changes after normalization. 
+
+```{r image3 , fig.align='center', echo=FALSE}
+
+img3 <- readPNG("./results/report_raw_CEL/dens.png")
+ grid.raster(img3)
+
+```
+
+The data was normalized for differential gene expression analysis using Robust Multichip Average (RMA) in the oligo BioConductor package. Here, RMA normalizes the intensity values at the probe level, and collapses probes into "core" transcripts based on annotations provided by Affymetrix.
+
+```{r normalize, results='hide', cache=TRUE}
+geneSummaries <- rma(affyRaw, target="core", background=T, normalize=T)
+```
+
+### QC post-normalization
+Repeat the previous QC using the normalized data, and we see that the distributions are similar to what we had found originally pulled from GEO. One option is removing those wide distribution samples.
+
+```{r normQC, eval=FALSE, echo=FALSE}
+arrayQualityMetrics(expressionset=geneSummaries, 
+                    outdir=file.path(resultsDir, 'report_rma.core'), 
+                    force=TRUE, 
+                    do.logtransform=FALSE,
+                    intgroup=c("BrainCode"))
+```
+
+```{r image4 , fig.align='center', echo=FALSE}
+
+img4 <- readPNG("./results/report_rma.core/dens.png")
+ grid.raster(img4)
+
+```
+
+## A simple linear model fit including RIN and PMI as covariates
+In the Kang et al study, age was evaluated using ANOVA and both RIN and PMI were included as covariates. To stay consistent, we performed an ANCOVA the same on Orbitofrontal cortex data, modeling Age/Developemental Stage as a continuous variable.
+
+```{r anova}
+
+# Remove outlier samples
+remove <- c(which(label(ddata)$x == 1), which(label(ddata)$x == 2))
+
+# Remove NA values
+meta_new <- meta_new[-remove,]
+meta_new <- meta_new[which(!is.na(meta_new$PMI)),]
+data_new <- exprs(eset.ofc)[,rownames(meta_new)]
+
+# Update expression set
+exprs(eset.ofc) <-data_new
+pData(eset.ofc) <- meta_new
+
+# Model fit
+mod<-model.matrix(~Stage + PMI + RIN, pData(eset.ofc))
+fit<-lmFit(eset.ofc, mod)
+fit<-eBayes(fit)
+
+topStage<-topTable(fit,coef=2,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+hist(topStage$P.Value, col="grey", border=F, main="P-value distribution: Age", xlab="P-value")
+
+topPMI<-topTable(fit,coef=3,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+hist(topPMI$P.Value, col="grey", border=F, main="P-value distribution: PMI", xlab="P-value")
+
+topRIN<-topTable(fit,coef=4,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+hist(topRIN$P.Value, col="grey", border=F, main="P-value distribution: RIN", xlab="P-value")
+
+```
+
+Alot of differentially expressed genes with Age/Developemntal Stage (`r length(which(topStage$adj.P.Val < 0.001))`) even at a quite stringent threshold (padj < 0.001). Suprisingly few significant changes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))`) and none associated with postmortem interval.
+
+## Comparing the expression changes of our top hits with age to changes with PMI
+Take the top 6 probes that are affected by age. Even though the changes are not identical, we still see a similarity in the trend as we did with the Braincloud data.
+
+```{r topgenes, echo=FALSE}
+
+ordered <- topStage[order(topStage$adj.P.Val),]
+
+# Subset expression data to genes of interest
+exp.sub <- data_new[row.names(ordered)[1:6], ]
+meta.sub <- meta_new[order(meta_new$Stage),]
+exp.sub <- exp.sub[,rownames(meta.sub)]
+
+# Merge with phenotype information
+df <- melt(exp.sub)
+df <- merge(df, meta.sub, by.x='X2', by.y='row.names')
+
+```
+
+```{r topPlot, echo=FALSE}
+p1 <- ggplot(df, aes(x=Stage, y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = unit(c(1, 0, 1, 1), "lines")) + 
+  scale_y_continuous(limits = c(3, 13), oob=rescale_none) +
+  ggtitle('Age') + 
+  ylab('Expression values')
+
+p2 <- ggplot(df, aes(x=PMI, y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title = element_blank(),  
+        axis.text.y = element_blank(),
+        plot.background = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.margin = unit(c(1, 1, 1, 0), "lines")) + 
+  scale_y_continuous(limits = c(3,13), oob=rescale_none) +
+  ggtitle('Postmortem Interval')
+
+# Set side-by-side
+gt1 <- ggplot_gtable(ggplot_build(p1))
+gt2 <- ggplot_gtable(ggplot_build(p2))
+newWidth = unit.pmax(gt1$widths[2:3], gt2$widths[2:3])
+
+# Set new size
+gt1$widths[2:3] = as.list(newWidth)
+gt2$widths[2:3] = as.list(newWidth)
+
+# Arrange
+grid.arrange(gt1, gt2, ncol=2)
+
+```
+
+## Comparing the expression changes of our top hits with age to changes with RIN
+
+```{r topPlot2, echo=FALSE}
+p1 <- ggplot(df, aes(x=Stage, y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title.x = element_blank(),
+        plot.margin = unit(c(1, 0, 1, 1), "lines")) + 
+  scale_y_continuous(limits = c(3, 13), oob=rescale_none) +
+  ggtitle('Age') + 
+  ylab('Expression values')
+
+p2 <- ggplot(df, aes(x=RIN, y=value)) +
+  geom_smooth(method=loess) +
+  facet_wrap(~X1) +
+  theme(axis.title = element_blank(),  
+        axis.text.y = element_blank(),
+        plot.background = element_blank(),
+        axis.ticks.y = element_blank(),
+        plot.margin = unit(c(1, 1, 1, 0), "lines")) + 
+  scale_y_continuous(limits = c(3,13), oob=rescale_none) +
+  ggtitle('RIN')
+
+# Set side-by-side
+gt1 <- ggplot_gtable(ggplot_build(p1))
+gt2 <- ggplot_gtable(ggplot_build(p2))
+newWidth = unit.pmax(gt1$widths[2:3], gt2$widths[2:3])
+
+# Set new size
+gt1$widths[2:3] = as.list(newWidth)
+gt2$widths[2:3] = as.list(newWidth)
+
+# Arrange
+grid.arrange(gt1, gt2, ncol=2)
+
+```
+
+
