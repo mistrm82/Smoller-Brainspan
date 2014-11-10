@@ -427,7 +427,6 @@ grid.arrange(gt1, gt2, ncol=2)
 
 ```
 
-## Comparing the expression changes of our top hits with age to changes with RIN
 
 ```{r topPlot2, echo=FALSE}
 p1 <- ggplot(df, aes(x=Stage, y=value)) +
