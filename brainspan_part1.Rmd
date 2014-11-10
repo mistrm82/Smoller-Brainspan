@@ -23,11 +23,13 @@ analystemail="mmistry@hsph.harvard.edu"
 
 Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
 
-> It doesn't look like BrainCloud is an ideal dataset because of the issues related to the PMI. Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner in that new dataset. 
+> We want to look at developmental changes in the postmortem human brain using gene expression data from publicly available from microarray studies. We hope to identify gene groups that share a similar trajectory of expression change, and use these groups to then overlay genetic association data. It doesn't look like BrainCloud is an ideal dataset because of the issues related to the PMI. Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner. 
 
 ## Workflow: 
 * grab the BrainSpan data from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) and metadata
-* focus on OFC; re-run the QC  on normalized and raw data
+* focus on OFC
+* take a quick look at metadata patterns across stage 
+* re-run the QC on normalized and raw data
 * differential expression analysis
 
 ## Setup
@@ -126,7 +128,7 @@ ggplot(donors, aes(x=BrainRegion, y=donors)) +
 ```
 
 
-## Data exploration: focus for now OFC
+## Metadata exploration: focus for now OFC
 Phenotype data is loaded in from which we can isolate our brain region of interest. In total there are `r length(unique(pheno_gene$BrainCode))` donors, from which multiple brain regions were sampled. 
 
 Exploring the metadata for consistency, and generating a quick overview:
@@ -279,7 +281,7 @@ require(oligo)
 require(pd.huex.1.0.st.v2)
 
 # Get data 
-celFiles <- list.celfiles(file.path(dataDir, 'geo_march2014/CEL'), full.names=TRUE)
+celFiles <- list.files(file.path(dataDir, 'geo_march2014/CEL'), full.names=TRUE)
 affyRaw <- read.celfiles(celFiles, verbose=FALSE)
 
 # Get metadata
@@ -303,7 +305,7 @@ arrayQualityMetrics(expressionset=affyRaw,
                     intgroup=c("BrainCode"))
 ```
 
-### QC pre-normalization
+### QC raw data: pre-normalization
 The raw data seems better than what we obtained from GEO, with higher signal intensities. Two samples show a slightly wider distribution and another is skewed to the left. Will check how this changes after normalization. 
 
 ```{r image3 , fig.align='center', echo=FALSE}
@@ -319,7 +321,7 @@ The data was normalized for differential gene expression analysis using Robust M
 geneSummaries <- rma(affyRaw, target="core", background=T, normalize=T)
 ```
 
-### QC post-normalization
+### QC raw data: post-normalization
 Repeat the previous QC using the normalized data, and we see that the distributions are similar to what we had found originally pulled from GEO. One option is removing those wide distribution samples.
 
 ```{r normQC, eval=FALSE, echo=FALSE}
@@ -372,8 +374,8 @@ hist(topRIN$P.Value, col="grey", border=F, main="P-value distribution: RIN", xla
 
 Alot of differentially expressed genes with Age/Developemntal Stage (`r length(which(topStage$adj.P.Val < 0.001))`) even at a quite stringent threshold (padj < 0.001). Suprisingly few significant changes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))`) and none associated with postmortem interval.
 
-## Comparing the expression changes of our top hits with age to changes with PMI
-Take the top 6 probes that are affected by age. Even though the changes are not identical, we still see a similarity in the trend as we did with the Braincloud data.
+## Developmental expression changes also identify with PMI and RIN
+Take the top 6 probes that are affected by age, and plot these values against age, PMI and RIN. Although the changes are not identical, we still see a similarity in the trend as we did with the Braincloud data. This indicates that factors need to be better corrected for to ensure we are identifying expression changes truly associated with development.
 
 ```{r topgenes, echo=FALSE}
 
