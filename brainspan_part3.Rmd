@@ -1,0 +1,204 @@
+---
+title: "Smoller Brainspan Part 3: STEM"
+output:
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_depth: 4
+    fig_caption: true
+    fig_width: 8
+    fig_height: 6
+author: "Meeta Mistry"
+---
+
+```{r setup, echo=FALSE}
+
+# Setup report details
+clientname="Erin Dunn"
+clientemail="erindunn@pngu.mgh.harvard.edu"
+lablocation="MGH"
+analystname="Meeta Mistry"
+analystemail="mmistry@hsph.harvard.edu"
+```
+
+Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
+
+1. Decision made to proceed with only postnatal samples. The fetal samples are problematic due to confounding effects from RIN and PMI, and despite our efforts in trying to address this we haven't been very successful. Moreover, the expression changes we are interested in is more during postnatal early development. 
+
+2. Keeping only brain regions with a sufficient number of samples (> 10), generate expression matrices averaged across each Stage
+
+3. Run STEM using default parameters and report result tables
+
+
+## Setup
+
+### Bioconductor and R libraries used
+
+```{r libraries, echo=TRUE}
+loadlibs <- function(){
+library(ggplot2)
+library(gtable)
+library(scales)
+library(RColorBrewer)
+library(reshape)
+library(Biobase)
+library(gridExtra)
+library(CHBUtils)
+library(png)
+library(stringr)
+library(dplyr)
+library(GEOquery)
+library(stringr)
+}
+suppressPackageStartupMessages(loadlibs())
+```
+
+### Set variables
+```{r variables, echo=TRUE}
+# Setup directory variables
+baseDir <- '.'
+dataDir <- file.path(baseDir, "data")
+metaDir <- file.path(dataDir, "meta")
+resultsDir <- file.path(baseDir, "results")
+```
+
+## Load the expression data
+```{r dataimport GEO, eval=FALSE}
+
+# Load GEO data
+gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matrix.txt.gz'))
+```
+
+
+## Get gene-level annotation data
+```{r gene-annot, eval=FALSE}
+
+# Extract gene symbols
+geneInfo <- as.character(fData(gse_gene)$gene_assignment)
+getGeneName <- sapply(geneInfo, function(x){
+  s <- strsplit(x, "//")
+  g <- s[[1]][2]
+})
+
+GeneSymbol <- str_trim(unname(getGeneName))  
+```
+
+## Load metadata
+```{r remove-regions, warning=FALSE, message=FALSE, fig.align='center'}
+
+# Load meta
+meta <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), header=T, sep="\t", row.names=1)
+meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)
+  
+region <- group_by(meta, BrainRegion)
+donors <- summarise(region, donors=n_distinct(BrainCode))
+ggplot(donors, aes(x=BrainRegion, y=donors)) +
+  geom_bar() +
+  ggtitle('Samples per Brain Region') + 
+  xlab('Brain Region') +
+  ylab('Number of Samples') +
+  theme(axis.text.x = element_text(colour="grey20",size=15,angle=45,hjust=.5,vjust=.5,face="plain"),
+        plot.title = element_text(size = rel(2.0)),
+        axis.title = element_text(size = rel(1.25)))
+
+brain_regions <- donors$BrainRegion[which(donors$donors > 10)]
+brain_regions <- as.character(brain_regions)
+```
+
+
+Keeping only brain regions for which we have more than 10 samples (based on the figure above), we were left with a **total of 16 brain regions** for input to STEM. The data were further filtered by retaining samples from the **right hemisphere** and only **postnatal samples (> Stage 7)**. For each probe in the filtered matrix, sample expression values were then averaged across each Stage and reordered increasing by Stage value. These data matrices can be downloaded using the links provided below:   
+
+```{r data-subset, echo=FALSE, eval=FALSE}
+
+for(b in brain_regions){
+  
+  sub <- meta[which(meta$BrainRegion == b & meta$Hemisphere == "R"),]
+  sub$PMI <- as.numeric(as.character(sub$PMI))
+
+  # Sort metadata
+  keep <- row.names(sub)[which(sub$Stage > 7)] 
+  sub <- sub[keep,]
+  sub <- droplevels(sub[order(sub$Stage),])
+
+  # Add data
+  data <- exprs(gse_gene) 
+  data <- data[,which(colnames(data) %in% rownames(sub))]
+  data <- data[,rownames(sub)]
+  
+  # Create matrix averaged for each Stage
+  df <- data.frame(cbind(t(data), Stage= sub$Stage))
+  agemeans <- aggregate(. ~ Stage, data=df, mean)
+  df <- t(agemeans)
+  colnames(df) <- paste("Stage", df[1,], sep="")
+  df <- cbind(GeneSymbol, df[-1,]) 
+  
+  # Check dimensions and write to file
+  if(nrow(df) != nrow(data)) 
+    stop("Error: Matrix is not same dimensions of original data matrix!")
+  write.table(df, file=paste("results/STEM/", b, "_STEM_Input.txt", sep=""), sep="\t", quote=F)}
+
+```
+
+### STEM Expression data input
+```{r input-files, results='asis', echo=FALSE}
+col1 <- c("[A1C- Primary auditory cortex](./results/STEM/A1C_STEM_Input.txt)", "[AMY- Amygdala](./results/STEM/AMY_STEM_Input.txt)", 
+          "[CBC- Cerebellar cortex](./results/STEM/CBC_STEM_Input.txt)", 
+          "[DFC- Doroslateral prefrontal cortex    ](./results/STEM/DFC_STEM_Input.txt)",
+          "[HIP- Hippocampus](./results/STEM/HIP_STEM_Input.txt)", "[IPC- Inferior parietal cortex](./results/STEM/IPC_STEM_Input.txt)",
+          "[ITC- Inferior temporal cortex](./results/STEM/ITC_STEM_Input.txt)", 
+          "[M1C - Primary motor cortex    ](./results/STEM/M1C_STEM_Input.txt)") 
+col2 <- c("[MD- Nucleus of thalamus](./results/STEM/MD_STEM_Input.txt)", "[MFC- Medial fronta cortex](./results/STEM/MFC_STEM_Input.txt)",
+          "[OFC- Orbitofrontal cortex](./results/STEM/OFC_STEM_Input.txt)",
+          "[S1C- Somatosensory cortex     ](./results/STEM/S1C_STEM_Input.txt)", 
+          "[STC- Superior temporal cortex](./results/STEM/STC_STEM_Input.txt)", "[STR- Striatum](./results/STEM/STR_STEM_Input.txt)", 
+          "[V1C- Primary visual cortex](./results/STEM/V1C_STEM_Input.txt)",
+          "[VFC- Ventrolateral frontal cortex     ](./results/STEM/VFC_STEM_Input.txt)") 
+test <- cbind(col1, col2)
+colnames(test) <- c("--------------------------------------------------------", "----------------------------------------------------------")
+kable(test, format='html')
+```
+
+##STEM
+The above data matrices are input for [STEM (Short Time-series Expression Miner)](http://www.cs.cmu.edu/~jernst/stem/). STEM is a software program designed for clustering and comparing gene expression data from short time series experiments. Although our data is not time-series data, we can still utilize this tool by combining expression data by Stage and using it as a proxy for time. We acknowledge that our data is not adequatleyorganized into equivalent time intervals, but this analysis can help identify groups of genes sharing similar expression profiles as a starting point for downstream analysis.
+
+### How does STEM work?
+
+1. First STEM defines a set of _model temporal expression profiles_ (independent of the data), by default is set to a maximum of 50
+2. Expression time series for each gene are transformed/normalized to start at 0 and remaining time point values are all relative. For genes with multiple probes mapping the expression is averaged.--LOG NORMALIZE??
+3. Each gene is assigned to the _model profile_ to which it most closely matches (based on correlation coefficient)
+4. Once all genes have been assigned, total number of genes for each profile are computed
+5. The significance of each profile membership is tested by permuting expression time points and reassigning genes to model profiles. Permutations are done a large number of times.
+6. Statistically significant profiles which are similar can be grouped together to form clusters of profiles
+
+
+### Results
+After the STEM clustering algorithm executes, the model profile overview interface appears. An example of such an interface is shown in the figure below (for Amygdala). Each box corresponds to a different model temporal expression profile. The number in the top left hand corner of a profile box is the model profile ID number. If the box is colored then a statistically significant number of genes were assigned to the model expression profile. Model profiles with the same color belong to the same cluster of profiles. The model profile overview for all 16 brain regions are located in `results/STEM` for viewing. The associated gene tables assigning probes to profiles (and including normalized values) are listed below for each brain region. 
+
+```{r model-profiles, echo=FALSE, fig.align='center'}
+require(png)
+require(gridExtra)
+img <- readPNG("results/STEM/AMY_STEM.png")
+grid.raster(img)
+```
+
+### Model profile assignments
+```{r output-files, results='asis', echo=FALSE}
+col1 <- c("[A1C- Primary auditory cortex](./results/STEM/A1C_STEM_Output.txt)", "[AMY- Amygdala](./results/STEM/AMY_STEM_Output.txt)", 
+          "[CBC- Cerebellar cortex](./results/STEM/CBC_STEM_Output.txt)", 
+          "[DFC- Doroslateral prefrontal cortex    ](./results/STEM/DFC_STEM_Output.txt)",
+          "[HIP- Hippocampus](./results/STEM/HIP_STEM_Output.txt)", "[IPC- Inferior parietal cortex](./results/STEM/IPC_STEM_Output.txt)",
+          "[ITC- Inferior temporal cortex](./results/STEM/ITC_STEM_Output.txt)", 
+          "[M1C - Primary motor cortex    ](./results/STEM/M1C_STEM_Output.txt)") 
+col2 <- c("[MD- Nucleus of thalamus](./results/STEM/MD_STEM_Output.txt)", "[MFC- Medial fronta cortex](./results/STEM/MFC_STEM_Output.txt)",
+          "[OFC- Orbitofrontal cortex](./results/STEM/OFC_STEM_Output.txt)",
+          "[S1C- Somatosensory cortex     ](./results/STEM/S1C_STEM_Output.txt)", 
+          "[STC- Superior temporal cortex](./results/STEM/STC_STEM_Output.txt)", "[STR- Striatum](./results/STEM/STR_STEM_Output.txt)", 
+          "[V1C- Primary visual cortex](./results/STEM/V1C_STEM_Output.txt)",
+          "[VFC- Ventrolateral frontal cortex     ](./results/STEM/VFC_STEM_Output.txt)") 
+test <- cbind(col1, col2)
+colnames(test) <- c("--------------------------------------------------------", "----------------------------------------------------------")
+kable(test, format='html')
+
+##### Parameters to possibly change from default: increase permutation from 50 to 1000; change the correction method to FDR; log normalizae values (instead of normalize)
+```
+
