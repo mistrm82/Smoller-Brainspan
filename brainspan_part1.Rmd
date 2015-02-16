@@ -23,13 +23,13 @@ analystemail="mmistry@hsph.harvard.edu"
 
 Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
 
-> We want to look at developmental changes in the postmortem human brain using gene expression data from publicly available from microarray studies. We hope to identify gene groups that share a similar trajectory of expression change, and use these groups to then overlay genetic association data. It doesn't look like BrainCloud is an ideal dataset because of the issues related to the PMI. Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner. 
+> We want to look at developmental changes in the postmortem human brain using gene expression data from publicly available from microarray studies. We hope to identify gene groups that share a similar trajectory of expression change, and use these groups to then overlay genetic association data. It doesn't look like BrainCloud is an ideal dataset because of the issues encountered previously, related to the PMI ([link to report](./brainCloud.html)). Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner. 
 
 ## Workflow: 
-* grab the BrainSpan data from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) and metadata
-* focus on OFC
-* take a quick look at metadata patterns across stage 
-* re-run the QC on normalized and raw data
+* grab the BrainSpan data from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) and associated metadata from publication [Kang et al., Nature 2011](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html)
+* explore the metadata across all brain regions
+* focus on OFC to look at correlations between demographic factors and Stage (our primary variable of interest)
+* use raw data to assess QC pre-normalization
 * differential expression analysis
 
 ## Setup
@@ -59,9 +59,9 @@ library(CHBUtils)
 ```
 
 ### Get variables
-- get base directory for analyses
-- specify data and results directories
-- specify column headers used in metadata file
+* get base directory for analyses
+* specify data and results directories
+* specify column headers used in metadata file
 
 
 ```{r variables, echo=TRUE}
@@ -74,7 +74,7 @@ resultsDir <- file.path(baseDir, "results")
 
 
 ## Load the expression data
-Using RMA background corrected data, with quantile normalization and log2-transformation. The median of all probe sets within one gene (transcript cluster) was used as the estimate of gene expression.  From the supplement '...a total of 17,565 mainly protein coding genes were surveyed'
+We are using data that has been pre-processed using the RMA (Robust Multi-array Average) algorithm. RMA is a tool commonly used to correct Affymetrix expression data. The algorithm uses only the PM (perfect match) probes to compute background adjusted observed intensities based on a model that assumes noise is normally distributed and signal is exponentially distributed. Corrected data is then quantile normalized and log2 transformed. The median of all probe sets within one gene (transcript cluster) was used as the estimate of gene expression for a total of 17,565 mainly protein coding genes.
 
 ```{r dataimport GEO, echo=TRUE, warning=FALSE, message=FALSE}
 
@@ -85,8 +85,11 @@ gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matr
 
 
 ## Extract metadata and relevant categories
+Metadata was loaded in from two files 1) donor-level 2) sample-level. Below we have summarized the data for each unique brain region (right hemisphere only). We included a plot to illustrate that the brain regions have varying number of donors. Brain regions with greater than 20 donors are those which we will focus on (a total of 16 regions). 
 
 ```{r metadata extract, eval=FALSE, echo=FALSE}
+
+### This code is NOT RUN in the report. It provides the script for parsing through the metadata provided in the GEO object. The relevant information was written to file and for ease that file is simply uploaded in the next code block.
 names(pData(gse_gene))
 pheno_gene <- pData(gse_gene)[,c(8,10:18)]
 
@@ -105,18 +108,20 @@ colnames(pheno_gene) <-c ("SampleName", "BrainCode", "BrainRegion", "Hemisphere"
 write.table(pheno_gene, file=file.path(metaDir, 'brainspan_samples_metadata.txt'), sep="\t", quote=F)
 ```
 
-```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE}
+```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE, results='asis', fig.align='center'}
 pheno_gene <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), row.names=1)
-meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)
-  
-# Subset data by region and hemisphere
-meta_ofc <- pheno_gene[which(pheno_gene$BrainRegion == "OFC" & pheno_gene$Hemisphere == "R"),]
-meta_ofc$PMI <- as.numeric(as.character(meta_ofc$PMI))
-meta_ofc$Stage <- factor(meta_ofc$Stage)
-# meta_amy <- pheno_gene[which(pheno_gene$BrainRegion == "AMY" & pheno_gene$Hemisphere == "R"),]
+pheno_gene$PMI <- as.numeric(as.character(pheno_gene$PMI))
+pheno_gene <- pheno_gene[which(pheno_gene$Hemisphere == "R"),]
+meta_donor <- read.delim(file.path(metaDir, 'brainspan_donor_metadata.txt'), row.names=1)  
 
 region <- group_by(pheno_gene, BrainRegion)
-donors <- summarise(region, donors=n_distinct(BrainCode))
+donors <- summarise(region, donors=n_distinct(BrainCode), meanPMI = mean(PMI, na.rm=T), minPMI = min(PMI, na.rm=T), 
+                    maxPMI = max(PMI, na.rm=T), meanPH = mean(pH, na.rm=T), minPH = min(pH, na.rm=T), maxPH = max(pH, na.rm=T),
+                    meanRIN = mean(RIN, na.rm=T), minRIN = min(RIN, na.rm=T), maxRIN = max(RIN, na.rm=T),
+                    Male=length(which(Sex == 'M')), Female=length(which(Sex == 'F')))
+
+kable(donors, row.names=F, format='markdown')
+
 ggplot(donors, aes(x=BrainRegion, y=donors)) +
   geom_bar() +
   ggtitle('Samples per Brain Region') + 
@@ -127,13 +132,10 @@ ggplot(donors, aes(x=BrainRegion, y=donors)) +
         axis.title = element_text(size = rel(1.25)))
 ```
 
+## Developmental stages
+Based on the metadata, there are a total of 15 stages; these are described below in more detail. **Note: Not all Stages have been sampled for every brain region**
 
-## Metadata exploration: focus for now OFC
-Phenotype data is loaded in from which we can isolate our brain region of interest. In total there are `r length(unique(pheno_gene$BrainCode))` donors, from which multiple brain regions were sampled. 
-
-Exploring the metadata for consistency, and generating a quick overview:
-
-```{r testMeta, echo=TRUE, results='asis', fig.align='center'}
+```{r dev-stages, echo=FALSE, fig.align='center', results='asis'}
 
 # Age table
 age.table <-as.character(unique(meta_donor$Period))
@@ -142,6 +144,16 @@ age.table <- do.call("rbind", age.table)
 row.names(age.table) <- rep("", nrow(age.table))
 colnames(age.table) <- c("Stage", "Description")
 kable(data.frame(age.table), format="markdown", row.names=FALSE)
+```
+
+
+## Metadata exploration: focus OFC
+In total there are `r length(unique(pheno_gene$BrainCode))` donors, from which multiple brain regions were sampled. As an example we have focused below on the Orbitofrontal cortex to explore how the different demographic factors vary with Stage.
+
+```{r testMeta, echo=TRUE, results='asis', fig.align='center'}
+# Subset data by region
+meta_ofc <- droplevels(pheno_gene[which(pheno_gene$BrainRegion == "OFC"),])
+meta_ofc$Stage <- factor(meta_ofc$Stage)
 
 # Age distribution
 ggplot(meta_ofc, aes(Stage)) +
@@ -152,7 +164,6 @@ ggplot(meta_ofc, aes(Stage)) +
   theme(axis.text.x = element_text(colour="grey20",size=15,angle=0,hjust=.5,vjust=.5,face="plain"),
         plot.title = element_text(size = rel(2.0)),
         axis.title = element_text(size = rel(1.25)))
-
 
 # pH measurements
 ggplot(na.omit(meta_ofc), aes(x=Stage, y=pH, fill=Stage)) + 
@@ -170,7 +181,7 @@ ggplot(na.omit(meta_ofc), aes(x=Stage, y=PMI, fill=Stage)) +
   geom_boxplot() + 
   ggtitle('Orbitofrontal Cortex: Postmortem Intervals') +
   xlab('Stage') +
-  ylab('Postmortem Interval') +
+  ylab('Postmortem Interval (hours)') +
   guides(fill=FALSE) +
   theme(legend.position="none",
         plot.title = element_text(size = rel(2.0)),
@@ -191,11 +202,10 @@ ggplot(na.omit(meta_ofc), aes(x=Stage, y=RIN, fill=Stage)) +
         axis.text = element_text(size = rel(1.25)))
 ```
 
-As we have seen with the Braincloud data, there is a  positive correlation observed with devleopmental stage and PMI and a negative correlations with RIN. Not surprising, fetal samples are more likely to have been obtained faster. The authors also acknolwedge this in the manuscript and account for it by incorporating both as covariates in the model. 
+As we previously observed with the [Braincloud](http://braincloud.jhmi.edu/downloads.htm) data, in this dataset there is also a positive correlation observed with developmental stage and PMI and a negative correlations with RIN. This is not surprising, as fetal samples are more likely to have been obtained faster (with less chance of RNA degradation). The authors in [Kang et al.](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html) acknowledge the problem and account for it by incorporating both PMI and RIN as covariates in the model. 
 
-## Quality Control on normalized data
-
-ArrayQualityMetrics QC report for [GSE25219](./results/report_OFC/index.html)
+## Quality Control
+We used ArrayQualityMetrics to assess the quality of the array data we obtained from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). The full QC report can be found at this [link](./results/report_OFC/index.html), where all figures and analysis is described in detail. Below we have plotted some of the QC figures and provide some insight into the interpretation.
 
 ```{r organize eset, echo=FALSE}
 # Add data
@@ -224,7 +234,8 @@ fData (eset.ofc) <- fData(gse_gene)
 ```
 
 
-## Clustering of normalized data 
+### Expression data clusters into Fetal and Postnatal groups
+To measure the degree of (dis) similarity between samples, a distance matrix was computed. Each sample is represented as a vector of expression with vector length equating to the total number of probes. The euclidian distance was used to measure the similarity between sample vectors and then hierarchical clustering was applied to evaluate how samples group together based on similarities. The dendrogram below demonstrates a high degree of similarity among fetal samples and likewise with postnatal samples. There are two fetal samples that cluster with postnatal samples. These same samples also appear as outliers in the heatmap provided in the [QC report](./results/report_OFC/index.html#S1).
 
 ```{r clusteringDendro, echo=FALSE, fig.align='center', fig.height=12, fig.width=10}
 
@@ -253,16 +264,8 @@ x <-eset.ofc
 
 ```
 
-
-A false color heatmap of the distance between arrays demonstrates a high degree of similarity among fetal samples and likewise with non-fetal samples. Two fetal samples cluster with postnatal, similar to dendorgram above. Remove these samples.
-```{r image1 , fig.align='center', echo=FALSE}
-
-img1 <- readPNG("./results/report_OFC_march2014//hm.png")
- grid.raster(img1)
-
-```
-
-Density plots (smoothed histograms) for all arrays follow a similar distribution shape and range.  The shape of distribution is questionable with a fairly heavy right tail.
+### Density plots
+Another means of outlier detection is to assess the [distribution of expression](./results/report_OFC/index.html#S2) for each array. Both the boxplots and density distribution illustrate consistency in shape and range across arrays. Density plots are smoothed histograms, and for microrarray data we typically observe a peak on the low end representing background signal, with frequency tapering off at the higher expression values. A [small bump](http://nebc.nerc.ac.uk/nebc_website_frozen/nebc.nerc.ac.uk//tools/bioinformatics-docs/other-bioinf/microarray-quality.html#dens) in expression may appear at higher values representative of 'true' signal. For these denisty plots we see a typical curve with the bump followed by a fairly heavy right tail, suggesting unusually high signal. 
 
 ```{r image2 , fig.align='center', echo=FALSE}
 
@@ -271,11 +274,11 @@ img2 <- readPNG("./results/report_OFC_march2014//dens.png")
 
 ```
 
+```{r rawQC, eval=FALSE, echo=FALSE}
+
+## This code is NOT RUN. Below is an evaluation of a random sampling of raw data. This analysis was undertaken to investigate whether the unusually high signal was a consequnce of normalization procedures. Since it did not result in anything conclusive it is not included in the final report.
+
 ## Quick check with raw data
-Try checking the quality on a handful of .CEL files and see if we see the same distribution. If not, it might be better to work directly from .CEL files.
-
-```{r raw data, echo=FALSE, results='asis', warning=FALSE, message=FALSE}
-
 # Load libraries
 require(oligo)
 require(pd.huex.1.0.st.v2)
@@ -295,60 +298,39 @@ colnames(affyRaw) <- rownames(covars)
 pData(affyRaw) <- covars 
 kable(covars, format="markdown")
 
-```
-
-```{r rawQC, eval=FALSE, echo=FALSE}
 arrayQualityMetrics(expressionset=affyRaw,
                     outdir=file.path(resultsDir, 'report_raw_CEL'), 
                     force=TRUE, 
                     do.logtransform=TRUE, 
                     intgroup=c("BrainCode"))
-```
 
-### QC raw data: pre-normalization
-The raw data seems better than what we obtained from GEO, with higher signal intensities. Two samples show a slightly wider distribution and another is skewed to the left. Will check how this changes after normalization. 
-
-```{r image3 , fig.align='center', echo=FALSE}
+## QC raw data: pre-normalization
+# The raw data seems better than what we obtained from GEO, with higher signal intensities. Two samples show a slightly wider distribution and another is skewed to the left. Will check how this changes after normalization. 
 
 img3 <- readPNG("./results/report_raw_CEL/dens.png")
  grid.raster(img3)
 
-```
-
-The data was normalized for differential gene expression analysis using Robust Multichip Average (RMA) in the oligo BioConductor package. Here, RMA normalizes the intensity values at the probe level, and collapses probes into "core" transcripts based on annotations provided by Affymetrix.
-
-```{r normalize, results='hide', cache=TRUE}
 geneSummaries <- rma(affyRaw, target="core", background=T, normalize=T)
-```
 
-### QC raw data: post-normalization
-Repeat the previous QC using the normalized data, and we see that the distributions are similar to what we had found originally pulled from GEO. One option is removing those wide distribution samples.
+## QC raw data: post-normalization
+# Repeat the previous QC using the normalized data, and we see that the distributions are similar to what we had found originally pulled from GEO. One option is removing those wide distribution samples.
 
-```{r normQC, eval=FALSE, echo=FALSE}
 arrayQualityMetrics(expressionset=geneSummaries, 
                     outdir=file.path(resultsDir, 'report_rma.core'), 
                     force=TRUE, 
                     do.logtransform=FALSE,
                     intgroup=c("BrainCode"))
-```
-
-```{r image4 , fig.align='center', echo=FALSE}
 
 img4 <- readPNG("./results/report_rma.core/dens.png")
  grid.raster(img4)
 
 ```
 
-## A simple linear model fit including RIN and PMI as covariates
-In the Kang et al study, age was evaluated using ANOVA and both RIN and PMI were included as covariates. To stay consistent, we performed an ANCOVA the same on Orbitofrontal cortex data, modeling Age/Developemental Stage as a continuous variable.
+## DE Analysis: linear modeling including RIN and PMI as covariates
+In the [Kang et al](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html) study, an ANOVA was used to evaluate genes that were temporally regulated. Age (Stage) was modeled as a continuous variable and both RIN and PMI were included as covariates. To stay consistent, we performed the same analysis using only the Orbitofrontal cortex data. 
 
 ```{r anova}
-
-# Remove outlier samples
-remove <- c(which(label(ddata)$x == 1), which(label(ddata)$x == 2))
-
 # Remove NA values
-meta_new <- meta_new[-remove,]
 meta_new <- meta_new[which(!is.na(meta_new$PMI)),]
 data_new <- exprs(eset.ofc)[,rownames(meta_new)]
 
@@ -361,21 +343,27 @@ mod<-model.matrix(~Stage + PMI + RIN, pData(eset.ofc))
 fit<-lmFit(eset.ofc, mod)
 fit<-eBayes(fit)
 
-topStage<-topTable(fit,coef=2,number=nrow(exprs(eset.ofc)), adjust.method="BH")
-hist(topStage$P.Value, col="grey", border=F, main="P-value distribution: Age", xlab="P-value")
-
+# Get results
+topStage <-topTable(fit,coef=2,number=nrow(exprs(eset.ofc)), adjust.method="BH")
+topStage$threshold <- as.logical(topStage$adj.P.Val < 0.01)
 topPMI<-topTable(fit,coef=3,number=nrow(exprs(eset.ofc)), adjust.method="BH")
-hist(topPMI$P.Value, col="grey", border=F, main="P-value distribution: PMI", xlab="P-value")
-
 topRIN<-topTable(fit,coef=4,number=nrow(exprs(eset.ofc)), adjust.method="BH")
-hist(topRIN$P.Value, col="grey", border=F, main="P-value distribution: RIN", xlab="P-value")
 
 ```
 
-Alot of differentially expressed genes with Age/Developemntal Stage (`r length(which(topStage$adj.P.Val < 0.001))`) even at a quite stringent threshold (padj < 0.001). Suprisingly few significant changes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))`) and none associated with postmortem interval.
+### Significant genes
+For each probe, the model fit results in a p-value which is generated based on the t-statistic for the coefficent. P-values are corrected for multiple testing and the FDR is reported for each probe. At a very liberal FDR of 0.05, there are **alot of differentially expressed genes with Age/Developemntal Stage** (`r length(which(topStage$adj.P.Val < 0.05))`). There are fewer genes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))`) and none associated with postmortem interval at that same threshold. The p-value distributions are plotted below for each of the three factors in the model (Stage, PMI and RIN). For Stage and RIN there are a _large proportion_ of genes with low p-values, suggesting that a large majority of genes are differentially expressed. 
 
-## Developmental expression changes also identify with PMI and RIN
-Take the top 6 probes that are affected by age, and plot these values against age, PMI and RIN. Although the changes are not identical, we still see a similarity in the trend as we did with the Braincloud data. This indicates that factors need to be better corrected for to ensure we are identifying expression changes truly associated with development.
+```{r pval-hist, echo=FALSE, fig.align='center'}
+
+par(mfrow=c(2,2))
+hist(topStage$P.Value, col="grey", border=F, main="Stage", xlab="P-value")
+hist(topPMI$P.Value, col="grey", border=F, main="PMI", xlab="P-value")
+hist(topRIN$P.Value, col="grey", border=F, main="RIN", xlab="P-value")
+```
+
+### Developmental expression changes also identify with PMI and RIN
+Since the two factors are correlated, there is a possibility that they are confounded making it hard to distinguish whether expression changes are due to developmental stage or RIN. Taking the top 6 probes that are affected by Stage, we plotted expression values against age, PMI and RIN. Although the changes are not identical, we still see a similarity in the trend. This indicates that factors need to be better corrected for to ensure we are identifying expression changes truly associated only with Devleopmental Stage.
 
 ```{r topgenes, echo=FALSE}
 
