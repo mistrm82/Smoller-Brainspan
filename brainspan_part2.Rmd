@@ -1,5 +1,5 @@
 ---
-title: "Smoller Brainspan Part 2: Updated GEO data"
+title: "Smoller Brainspan Part 2"
 output:
   html_document:
     theme: cosmo
@@ -21,14 +21,18 @@ analystname="Meeta Mistry"
 analystemail="mmistry@hsph.harvard.edu"
 ```
 
-Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
+Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. 
 
-Test for differential gene expression between brain samples taken at different ages as part of the [BrainSpan](http://www.brainspan.org/) project.There are two sources of Brainspan data: 1) link on Brainspan website 2) GEO submission which is associated with the publication [Kang et al, Nature 2011](http://www.ncbi.nlm.nih.gov/pubmed/22031440). The data available for download on the Brainspan website is missing a large number of samples compared to the GEO dataset. Correspondence with Ying Zhu from Nenad Sestan's lab provided us with instruction to use the full dataset on GEO as opposed to the data on Brainspan. This GEO entry was updated since Part I report and the most recent version of data can be downloaded from GEO [GSE25219](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). Data used in this report was downloaded from GEO on 10/09/2014.
+> In Part I, we verified that the problem of confounding variables exists within the Kang et al developmental expression data that we are using. In the next stages we aim to remove the effects of confounders by applying  various methods which include isva best described in [Teschendorff A.E. et al., 2011](http://bioinformatics.oxfordjournals.org/content/27/11/1496.long) and RUV (remove unwanted variation) a method described in more detail [Gagnon-Bartsch J.A., 2011](http://biostatistics.oxfordjournals.org/content/13/3/539.short). 
 
-> RNA from 269 human prefrontal cortex samples ranging from fetal development (negative ages) through aging (80 years) were analyzed on custom 2-color microarrays from the National Human Genome Research Institute (NHGRI) microarray core facility using a reference RNA comprised of a pool of all samples.
+ISVA is not inlcuded in the final html report but code remains in the markdown file.
 
 ## Workflow
-Starting from the pre-'cleaned' data from GEO, the dataset contains samples from 16 different brain regions. We focused on the orbitofrontal cortex samples for the remaining analyses in this report. We implement methods to remove the effects of confounders by applying various methods which include isva best described in [Teschendorff A.E. et al., 2011](http://bioinformatics.oxfordjournals.org/content/27/11/1496.long) and RUV (remove unwanted variation) a method described in more detail [Gagnon-Bartsch J.A., 2011](http://biostatistics.oxfordjournals.org/content/13/3/539.short). ISVA is not inlcuded in the final html report but code remains in the markdown file.
+
+* Download the most up-to-date version of the GEO data
+* Identify a set of negative control genes
+* RUV results and interpretations
+* Conclusions
 
 ## Setup
 
@@ -69,7 +73,14 @@ resultsDir <- file.path(baseDir, "results")
 ```
 
 ## Load the expression data
+There are two sources of Brainspan data: 
 
+1. Link on [Brainspan](http://www.brainspan.org/static/download.html) website
+2. GEO submission which is associated with the publication [Kang et al, Nature 2011](http://www.ncbi.nlm.nih.gov/pubmed/22031440)
+
+The data available for download on the **Brainspan website is missing a large number of samples** compared to the GEO dataset. Correspondence with Ying Zhu (ying.zhu@yale.edu) from Nenad Sestan's lab provided us with instruction to use the full dataset on GEO as opposed to the data on Brainspan. The GEO entry GSE25219 was updated since Part I report and the most recent version of data can be downloaded from GEO [GSE25219](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). Data used in this report was downloaded from GEO on 10/09/2014.
+
+The expression data obtained from GEO has been pre-processed with RMA, quantile normalized and log2 transformed (as in Part I). The dataset contains samples from 16 different brain regions, but we focused on the orbitofrontal cortex samples for the remaining analyses in this report.
 ```{r dataimport GEO}
 
 # Load GEO data
@@ -129,8 +140,10 @@ ggplot(meta_new, aes(x=factor(Stage), y=RIN, fill=fetal)) +
         axis.title = element_text(size = rel(1.25)))
 ```
 
-## Quality Control changes from new and old GEO version
-The results below compare the QC for the orbitofrontal cortex data between the old version of the GEO data we downloaded - described in Part 1 - with the QC data we have in the most recent version.  We did this to get a better understanding of how the expression data may have changed from the previous version.  The left hand plot shows shows a false color heatmap of the distances between arrays in the old version. Patterns in this plot indicate clustering of the arrays by fetal and postnatal age with the exception of two samples. The right hand plot shows the same plot using the current version of the data, where we observe the outliers no longer exist. There is definitely some change in the data as samples cluster somewhat differently, although a bit unsure of the source of change. Regardless of this small change we will continue using the current version.
+## QC: Comparing GEO versions
+We are using a new version of expression data from GEO and we are unsure of what the difference is. The total number of samples is the same between versions, but perhaps there is some thing about the expression that has changed. To gain a better understanding of how the expression data may have changed from the previous version we performed a quick check of the data quality. The new data (OFC only, to stay consistent with Part I) was run through [arrayQualityMetrics](http://www.bioconductor.org/packages/release/bioc/vignettes/arrayQualityMetrics/inst/doc/arrayQualityMetrics.pdf) and diagnostic plots were compared to those generated from Part I GEO data.
+
+Below we plotted the false color heatmaps generated from the two different GEO versions, as this is where we observed a small discrepancy. The left hand plot is the heatmap of the sample-to-sample distances between arrays in the old version. Smaller distances (in blue) indicate the samples are more similar to one another, where distances closer to 1 (yellow) suggest divergence. Patterns in the left hand  plot indicate clustering of the arrays by fetal and postnatal age with the _exception of two samples_. The right hand plot shows a false color heatmap using the current (most up to date) version of the data, where the outliers no longer exist. There is definitely some change in the data as samples cluster somewhat differently, although a bit unsure of the source of change. As such, we will continue using the current version.
 
 ```{r qc-compare, fig.align='center', echo=FALSE, fig.width=11}
 
@@ -141,6 +154,8 @@ grid.arrange(rasterGrob(img2), rasterGrob(img3), ncol=2)
 
 
 ```{r isva, fig.align='center', warning=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+
+## This code was NOT RUN for this report, although results have been generated
 
 ## ISVA: Differential expression analysis
 # It makes sense to model the effect of confounding factors on the data as statistically independent random variables, as it better reflects the way the confounding noise is generated. This requires them to be uncorrelated with the primary variable of interest in a non-linear fashion, a stronger condition than the _linear_ uncorrelatedness imposed by an SVD. In order to model CFs as statistically independent variables, isva uses independent component analysis (ICA). Since we are using Stage as an ordinal factor (a special case of categorical), it is going to be problematic to have Stages with only one sample. Therefore we will remove samples from Stages 9 and 10. Alot of differentially expressed genes!
