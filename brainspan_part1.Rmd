@@ -1,5 +1,5 @@
 ---
-title: "Smoller Brainspan Part 1: GEO Data Overview"
+title: "Smoller Brainspan Part I"
 output:
   html_document:
     theme: cosmo
@@ -23,7 +23,7 @@ analystemail="mmistry@hsph.harvard.edu"
 
 Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. Request from client was:
 
-> We want to look at developmental changes in the postmortem human brain using gene expression data from publicly available from microarray studies. We hope to identify gene groups that share a similar trajectory of expression change, and use these groups to then overlay genetic association data. It doesn't look like BrainCloud is an ideal dataset because of the issues encountered previously, related to the PMI ([link to report](./brainCloud.html)). Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner. 
+> We want to look at developmental changes in the postmortem human brain using gene expression data from publicly available from microarray studies. We hope to identify gene groups that share a similar trajectory of expression change, and use these groups to then overlay genetic association data. It doesn't look like BrainCloud is an ideal dataset because of the issues encountered previously, related to the PMI ([link to report](https://www.dropbox.com/s/ovpaggapjmuvhln/brainCloud.html?dl=0)). Given this, I think we should probably focus on BrainSpan and run a parallel set of analyses to see if things look cleaner. 
 
 ## Workflow: 
 * grab the BrainSpan data from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) and associated metadata from publication [Kang et al., Nature 2011](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html)
@@ -37,6 +37,7 @@ Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact 
 ### Bioconductor and R libraries used
 
 ```{r libraries, echo=TRUE}
+loadlibs <- function(){
 library(ggplot2)
 library(gtable)
 library(scales)
@@ -56,6 +57,8 @@ library(png)
 library(sva)
 library(dplyr)
 library(CHBUtils)
+}
+suppressPackageStartupMessages(loadlibs())
 ```
 
 ### Get variables
@@ -108,7 +111,7 @@ colnames(pheno_gene) <-c ("SampleName", "BrainCode", "BrainRegion", "Hemisphere"
 write.table(pheno_gene, file=file.path(metaDir, 'brainspan_samples_metadata.txt'), sep="\t", quote=F)
 ```
 
-```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE, results='asis', fig.align='center'}
+```{r metadata from file, echo=TRUE, warning=FALSE, message=FALSE}
 pheno_gene <- read.delim(file.path(metaDir, 'brainspan_samples_metadata.txt'), row.names=1)
 pheno_gene$PMI <- as.numeric(as.character(pheno_gene$PMI))
 pheno_gene <- pheno_gene[which(pheno_gene$Hemisphere == "R"),]
@@ -119,7 +122,10 @@ donors <- summarise(region, donors=n_distinct(BrainCode), meanPMI = mean(PMI, na
                     maxPMI = max(PMI, na.rm=T), meanPH = mean(pH, na.rm=T), minPH = min(pH, na.rm=T), maxPH = max(pH, na.rm=T),
                     meanRIN = mean(RIN, na.rm=T), minRIN = min(RIN, na.rm=T), maxRIN = max(RIN, na.rm=T),
                     Male=length(which(Sex == 'M')), Female=length(which(Sex == 'F')))
+```
 
+## Demographic data per brain region
+```{r donortable-plot, warning=FALSE, message=FALSE, results='asis', fig.align='center', echo=FALSE}
 kable(donors, row.names=F, format='markdown')
 
 ggplot(donors, aes(x=BrainRegion, y=donors)) +
@@ -205,7 +211,7 @@ ggplot(na.omit(meta_ofc), aes(x=Stage, y=RIN, fill=Stage)) +
 As we previously observed with the [Braincloud](http://braincloud.jhmi.edu/downloads.htm) data, in this dataset there is also a positive correlation observed with developmental stage and PMI and a negative correlations with RIN. This is not surprising, as fetal samples are more likely to have been obtained faster (with less chance of RNA degradation). The authors in [Kang et al.](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html) acknowledge the problem and account for it by incorporating both PMI and RIN as covariates in the model. 
 
 ## Quality Control
-We used ArrayQualityMetrics to assess the quality of the array data we obtained from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). The full QC report can be found at this [link](./results/report_OFC/index.html), where all figures and analysis is described in detail. Below we have plotted some of the QC figures and provide some insight into the interpretation.
+We used ArrayQualityMetrics to assess the quality of the array data we obtained from [GEO](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). The full QC report can be found at this [link](./results/report_OFC_march2014/index.html), where all figures and analysis is described in detail. Below we have plotted some of the QC figures and provide some insight into the interpretation.
 
 ```{r organize eset, echo=FALSE}
 # Add data
@@ -234,10 +240,10 @@ fData (eset.ofc) <- fData(gse_gene)
 ```
 
 
-### Expression data clusters into Fetal and Postnatal groups
-To measure the degree of (dis) similarity between samples, a distance matrix was computed. Each sample is represented as a vector of expression with vector length equating to the total number of probes. The euclidian distance was used to measure the similarity between sample vectors and then hierarchical clustering was applied to evaluate how samples group together based on similarities. The dendrogram below demonstrates a high degree of similarity among fetal samples and likewise with postnatal samples. There are two fetal samples that cluster with postnatal samples. These same samples also appear as outliers in the heatmap provided in the [QC report](./results/report_OFC/index.html#S1).
+### Expression data clusters into 'fetal' and 'postnatal' sample groups
+To measure the degree of (dis) similarity between samples, a distance matrix was computed. Each sample is represented as a vector of expression with vector length equating to the total number of probes. The euclidian distance was used to measure the similarity between sample vectors and then hierarchical clustering was applied to evaluate how samples group together based on similarities. The dendrogram below demonstrates a high degree of similarity among fetal samples and likewise with postnatal samples. There are two fetal samples that cluster with postnatal samples. These same samples also appear as outliers in the heatmap provided in the [QC report](./results/report_OFC_march2014/index.html#S1).
 
-```{r clusteringDendro, echo=FALSE, fig.align='center', fig.height=12, fig.width=10}
+```{r clusteringDendro, echo=FALSE, fig.align='center', fig.height=12, fig.width=10, warning=FALSE, message=FALSE}
 
 require(ggdendro)
 meta_new$Stage_Name <- sapply(meta_new$Stage, function(x) 
@@ -265,7 +271,7 @@ x <-eset.ofc
 ```
 
 ### Density plots
-Another means of outlier detection is to assess the [distribution of expression](./results/report_OFC/index.html#S2) for each array. Both the boxplots and density distribution illustrate consistency in shape and range across arrays. Density plots are smoothed histograms, and for microrarray data we typically observe a peak on the low end representing background signal, with frequency tapering off at the higher expression values. A [small bump](http://nebc.nerc.ac.uk/nebc_website_frozen/nebc.nerc.ac.uk//tools/bioinformatics-docs/other-bioinf/microarray-quality.html#dens) in expression may appear at higher values representative of 'true' signal. For these denisty plots we see a typical curve with the bump followed by a fairly heavy right tail, suggesting unusually high signal. 
+Another means of outlier detection is to assess the [distribution of expression](./results/report_OFC_march2014/index.html#S2) for each array. Both the boxplots and density distribution illustrate consistency in shape and range across arrays. Density plots are smoothed histograms, and for microrarray data we typically observe a peak on the low end representing background signal, with frequency tapering off at the higher expression values. A [small bump](http://nebc.nerc.ac.uk/nebc_website_frozen/nebc.nerc.ac.uk//tools/bioinformatics-docs/other-bioinf/microarray-quality.html#dens) in expression may appear at higher values representative of 'true' signal. For these denisty plots we see a typical curve with the bump followed by a fairly heavy right tail, suggesting unusually high signal. 
 
 ```{r image2 , fig.align='center', echo=FALSE}
 
@@ -352,7 +358,7 @@ topRIN<-topTable(fit,coef=4,number=nrow(exprs(eset.ofc)), adjust.method="BH")
 ```
 
 ### Significant genes
-For each probe, the model fit results in a p-value which is generated based on the t-statistic for the coefficent. P-values are corrected for multiple testing and the FDR is reported for each probe. At a very liberal FDR of 0.05, there are **alot of differentially expressed genes with Age/Developemntal Stage** (`r length(which(topStage$adj.P.Val < 0.05))`). There are fewer genes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))`) and none associated with postmortem interval at that same threshold. The p-value distributions are plotted below for each of the three factors in the model (Stage, PMI and RIN). For Stage and RIN there are a _large proportion_ of genes with low p-values, suggesting that a large majority of genes are differentially expressed. 
+For each probe, the model fit results in a p-value which is generated based on the t-statistic for the coefficent. P-values are corrected for multiple testing and the FDR is reported for each probe. At a very liberal FDR of 0.05, there are **alot of differentially expressed genes with Age/Developemntal Stage** (`r length(which(topStage$adj.P.Val < 0.05))` genes). There are fewer genes associated with RIN (`r length(which(topRIN$adj.P.Val < 0.05))` genes) and none associated with postmortem interval at that same threshold. The p-value distributions are plotted below for each of the three factors in the model (Stage, PMI and RIN). For Stage and RIN there are a _large proportion_ of genes with low p-values, suggesting that a large majority of genes are differentially expressed. 
 
 ```{r pval-hist, echo=FALSE, fig.align='center'}
 
@@ -363,7 +369,7 @@ hist(topRIN$P.Value, col="grey", border=F, main="RIN", xlab="P-value")
 ```
 
 ### Developmental expression changes also identify with PMI and RIN
-Since the two factors are correlated, there is a possibility that they are confounded making it hard to distinguish whether expression changes are due to developmental stage or RIN. Taking the top 6 probes that are affected by Stage, we plotted expression values against age, PMI and RIN. Although the changes are not identical, we still see a similarity in the trend. This indicates that factors need to be better corrected for to ensure we are identifying expression changes truly associated only with Devleopmental Stage.
+Since the two factors are correlated, there is a possibility that they are confounded making it hard to distinguish whether expression changes are due to developmental stage or RIN. Taking the top 6 probes that are affected by Stage, we plotted expression values against age, PMI and RIN. Although the changes are not identical, we still see a similarity in the trend. This indicates that factors need to be better corrected for to ensure we are identifying expression changes truly associated only with Devlopmental Stage.
 
 ```{r topgenes, echo=FALSE}
 
