@@ -1,5 +1,5 @@
 ---
-title: "Smoller Brainspan Part 2"
+title: "Smoller Brainspan Part II"
 output:
   html_document:
     theme: cosmo
@@ -23,16 +23,16 @@ analystemail="mmistry@hsph.harvard.edu"
 
 Array analysis for `r clientname` (`r clientemail`) at `r lablocation`. Contact `r analystname` (`r analystemail`) for additional details. 
 
-> In Part I, we verified that the problem of confounding variables exists within the Kang et al developmental expression data that we are using. In the next stages we aim to remove the effects of confounders by applying  various methods which include isva best described in [Teschendorff A.E. et al., 2011](http://bioinformatics.oxfordjournals.org/content/27/11/1496.long) and RUV (remove unwanted variation) a method described in more detail [Gagnon-Bartsch J.A., 2011](http://biostatistics.oxfordjournals.org/content/13/3/539.short). 
+> In Part I, we verified that the problem of confounding variables exists within the [Kang et al](http://www.nature.com/nature/journal/v478/n7370/full/nature10523.html) developmental [expression data](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219) that we are using. In the next stages we aim to remove the effects of confounders by applying  various methods which include _isva_ best described in [Teschendorff A.E. et al., 2011](http://bioinformatics.oxfordjournals.org/content/27/11/1496.long) and _RUV_ (remove unwanted variation) a method described in more detail [Gagnon-Bartsch J.A., 2011](http://biostatistics.oxfordjournals.org/content/13/3/539.short). 
 
-ISVA is not inlcuded in the final html report but code remains in the markdown file.
+**Note: ISVA is not included in the final HTML report but code remains in the markdown file.**
 
 ## Workflow
 
 * Download the most up-to-date version of the GEO data
 * Identify a set of negative control genes
 * RUV results and interpretations
-* Conclusions
+* Considerations
 
 ## Setup
 
@@ -78,10 +78,10 @@ There are two sources of Brainspan data:
 1. Link on [Brainspan](http://www.brainspan.org/static/download.html) website
 2. GEO submission which is associated with the publication [Kang et al, Nature 2011](http://www.ncbi.nlm.nih.gov/pubmed/22031440)
 
-The data available for download on the **Brainspan website is missing a large number of samples** compared to the GEO dataset. Correspondence with Ying Zhu (ying.zhu@yale.edu) from Nenad Sestan's lab provided us with instruction to use the full dataset on GEO as opposed to the data on Brainspan. The GEO entry GSE25219 was updated since Part I report and the most recent version of data can be downloaded from GEO [GSE25219](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). Data used in this report was downloaded from GEO on 10/09/2014.
+The data available for download on the **Brainspan website is missing a large number of samples** compared to the GEO dataset. Correspondence with Ying Zhu (ying.zhu@yale.edu) from Nenad Sestan's lab provided us with instruction to use the full dataset on GEO as opposed to the data on Brainspan. The GEO entry GSE25219 was updated since the Part I report and the most recent version of data can be downloaded from GEO [GSE25219](http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE25219). **Data used in this report was downloaded from GEO on 10/09/2014.**
 
-The expression data obtained from GEO has been pre-processed with RMA, quantile normalized and log2 transformed (as in Part I). The dataset contains samples from 16 different brain regions, but we focused on the orbitofrontal cortex samples for the remaining analyses in this report.
-```{r dataimport GEO}
+The expression data obtained from GEO has been pre-processed with RMA, quantile normalized and log2 transformed (as in [Part I](./brainspan_part1.Rmd)). The dataset contains samples from 16 different brain regions, but we focused on the orbitofrontal cortex samples for the remaining analyses in this report.
+```{r dataimport GEO, warning=FALSE, message=FALSE}
 
 # Load GEO data
 gse_gene <- getGEO(filename=file.path(dataDir, 'geo/GSE25219-GPL5175_series_matrix.txt.gz'))
@@ -223,17 +223,16 @@ grid.arrange(gt1, gt2, ncol=2)
 ```
 
 ## RUV: remove unwanted variation
-We next applied RUV to remove unwanted variation in the data - namely to see if we could remove the effects of confounding variables RIN and PMI confounding effects. The strategy with RUV is to use negative control genes and identify surrogate variables based on the expression of those genes. Negative control genes are genes whose expression levels are known a priori to be truly unassociated with the biological factor of interest.  In other words, genes that we know a prior do not change in their expression over the course of development. 
+We next applied [RUV](http://www.stat.berkeley.edu/~johann/ruv/) to remove unwanted variation in the data - namely to see if we could remove the effects of confounding variables RIN, PMI, and other possible non-measured confounders. The strategy underlying RUV is to use negative control genes and identify a set of K surrogate variables based on the expression of those genes. These surrogate variables are incorporated into the linear model as covariates to correct for unwanted variation. The negative control genes are genes whose expression levels are known a priori to be truly unassociated with the biological factor of interest. In our case, genes that we know a priori do not change in their expression over the course of development. 
 
-Our original strategy was to use housekeeping genes as provided in [Eisenberg E., and Levanon E.Y.](http://www.ncbi.nlm.nih.gov/pubmed/12850439) as our list of negative control genes.  However, the diganostic plots from an RUV starter anlaysis did not differ between negative control genes and all other genes (report can be found [here](./ruv_hk_full/index.html) ). This meant one of two things; either the unwanted variation really is extremely correlated with X, or the negative controls aren't actually negative controls and they're picking up some biology along with the unwanted factors. We assumed it is the latter, and searched for a better set of negative control genes.
+Our original strategy was to use _housekeeping genes_ as provided in [Eisenberg E., and Levanon E.Y.](http://www.ncbi.nlm.nih.gov/pubmed/12850439) as our list of _negative control genes_. The RUV starter analysis generates two panels of diagnostic plots, 1) for all genes that are being assayed and 2) for only the nagtive control gene set (please see the [how-to manual](http://www.stat.berkeley.edu/~johann/ruv/howto/howto.html) for step-by-step description and interpretation). These panels are generated for all levels of K specified. Using these diagnostic plots we can then determine what K is best to use (i.e how many surrogate variables to include)
 
-Our current/next strategy, was to generate a list of negative control genes by trying to identify a  list of genes that are associated with our unwanted factors (RIN and PMI) but are unaffected by age. Doing so requires using a cohort in which age is not correlated with either RIN or PMI. For this we used only postnatal samples (Stage 8 or higher), and used liner modeling to identify genes differentially expressed with RIN or PMI.
+However, the diganostic plots from the RUV starter analysis demonstrated that the **housekeeping genes** behave similar to the rest of the genes assayed. Thus, this was **not a good set of negative controls** and they are picking up some biology along with the unwanted factors (RUV report can be found [here](./ruv_hk_full/index.html) ). 
 
-### Using only postnatal samples RIN and PMI show no correlation with age/stage
-Below we have plotted Stage on the x-axis and PMI and RIN on the y-axis for each sample in the postnatal cohort. We observe no correlation between the confounding variables and Stage; so we know that any expression changes we do extract from differential expression analysis for each factor are _less_likely_to_be_confounded_with_age_.
+### Finding a better set of negative control genes
+Two factors that are adding unwanted variation in our data are RIN and PMI. A good set of negative controls would therefore be to find a set of genes that are **associated with these variables (RIN and PMI) yet unaffected by age**. In our current cohort, RIN and PMI are highly correlated with age (our primary variable of interest), so it is almost impossible to extract changes that are unique to the confounders. However, if we use only postantal samples this correlation disappears. Below we have plotted Stage on the x-axis and PMI and RIN on the y-axis for each sample in the _postnatal only cohort_. 
 
 ```{r rin-pmi, echo=TRUE, eval=TRUE, fig.align='center'}
-
 # Keep only samples >= Stage 8
 samples <- row.names(pData(eset.ofc))[which(pData(eset.ofc)$Stage >= 8)]
 eset.nc <- eset.ofc[,samples]
@@ -258,10 +257,14 @@ p2 <- ggplot(pData(eset.nc), aes(x=Stage, y=RIN)) +
 grid.arrange(p1, p2, ncol=2)
 ```
 
-### Look for genes associated with these unwanted factors
-We used linear modeling to identify genes siginficantly associated with RIN and PMI in the postnatal cohort. Each variable was analyzed independently and p-values were extracted with distributions are plotted below. The uniform distribution on the left indicates that there are no  genes particulalry sensitive, however there are some changes associated with RIN.
+### Using 'postnatal only' cohort to find negative control genes 
+Since there is no correlation between our unwanted factors (RIN and PMI) and our primary variable of interest (Stage) in the postnatal only cohort, the gene set we identify is less likely to be age associated. We cannot be 100% sure as there still may be age/Stage related changes that across the postnatal span of life that overlap with changes with RIN and PMI. 
 
-```{r negctl, fig.align='center', fig.width=12}
+We ran two linear models using the 'postnatal only' cohort, one for RIN and one for PMI. Since both are continuous variables we are essentially performing a linear regression for each probe. The resulting p-value for each probe tests the null hypothesis that the coefficient is equal to zero (no effect). A low p-value indicates that you can reject the null hypothesis and changes in the predictor's value are related to changes in the response variable (gene expression). The p-values generated for each association test (~17,000 probes) are plotted using the histogram below. The p-value is on the x-axis, and the y-axis represents the frequency of each p-value. 
+
+Results from these analyses suggest that there are no genes that appear to differ substantially in expression as a function of PMI (plot on left). While the plot on the right suggests there is a small subset of genes that change as a function of RIN. 
+
+```{r negctl, fig.align='center', fig.width=12, echo=FALSE, warning=FALSE, message=FALSE}
 # model PMI
 mod <- model.matrix(~PMI, pData(eset.nc))
 fit<-lmFit(eset.nc, mod)
@@ -295,9 +298,9 @@ p2 <- ggplot(topRIN, aes(x=P.Value)) +
 grid.arrange(p1, p2, ncol=2)
 ```
 
-To complement the associations (or lack of) found via linear modeling, we also computed correlations for each gene with RIN and PMI. A histogram of correlation values are plotted below. Correlations with PMI form a narrow distribution centered around zero, indicating that most genes have little or no correlation with PMI. With RIN we see a much broader distribution of correlation values, indicating genes show a higher magnitude of association with RIN.
+To complement the associations (or lack thereof) found via linear modeling, we also computed correlations. For each probe we measure the correlation between 1) RIN and expression and 2) PMI and expression. A histogram of correlation values are plotted below. Correlations with PMI form a narrow distribution centered around zero, indicating that most genes have little or no correlation with PMI. With RIN we see a much broader distribution of correlation values, indicating genes show a higher magnitude of association with RIN.
 
-```{r correlations, fig.align='center', fig.width=15}
+```{r correlations, fig.align='center', fig.width=15, echo=FALSE, warning=FALSE, message=FALSE}
 
 cor.PMI <- apply(exprs(eset.nc), 1, function(x){cor(x, pData(eset.nc)$PMI)})
 cor.RIN  <- apply(exprs(eset.nc), 1, function(x){cor(x, pData(eset.nc)$RIN)})
@@ -323,15 +326,27 @@ p2 <- ggplot(df, aes(x=cor.RIN)) +
 
 grid.arrange(p1, p2, ncol=2)
 ```
+**Our new negative control set of genes is generated by selecting the top 50 genes ranked by p-values obtained from linear modeling. We will refer to this set as 'BrainSpan negative controls'**
 
+### Validate Brainspan negative controls
+To evaluate if this new set of genes serve as 'better' negative controls, we need to see if and how much they are driving age/Stage related changes. To do this revert back to the expression data from the full cohort (fetal + postnatal samples) and extract only rows corresponding to our top genes. Using this subset of expression data we perform a PCA as we are interested in finding the directions (components) that maximize the variance in our dataset (right plot). Using all genes on the array (left plot) we see that there is a clear demarkation between fetal and postnatal samples (i.e the first PC is expalained by fetal versus postnatal). Using only the top RIN associated genes there is still separation of samples, but to a lesser extent. 
 
-### PCA: check if RIN genes contribute to fetal vs postnatal differences
-We took the top RIN associated genes by selecting the top 50 genes ranked by p-values obtained from linear modeling. We revert back to the expression data from the full cohort (fetal + postnatal) and extract only rows corresponding to our top genes. Using this subset of expression data we perform a PCA as we are interested in finding the directions (components) that maximize the variance in our dataset. We know that using all genes on the array the first PC is expalained by fetal versus postnatal. Using only the top RIN associated genes we still see that, but to a lesser extent. 
+_Note: It appears that many genes change in expression between fetal and postnatal stage of development, and finding the perfect set of negative control genes will be difficult. We may want to consider using only postnatal samples._
 
-```{r pcacheck}
+```{r pcacheck, echo=FALSE, fig.align='center', fig.width=12}
 
+## All genes PCA
+myPca <- prcomp(t(exprs(eset.ofc)))
+
+# Plot first factor of interest
+tmpPCAData <- as.data.frame(myPca$x[,1:5])
+par(mfrow=c(1,2))
+plot(PC2 ~ PC1, data=tmpPCAData, col=c("black", "red")[pData(eset.ofc)[,"fetal"]], 
+     pch=19, main="All genes")
+legend("top", inset=.05, title="", legend=levels(pData(eset.ofc)[,"fetal"]), fill=c('black', 'red'), horiz=FALSE)
+
+## Negative control genes PCA
 topranked <- which(row.names(exprs(eset.ofc)) %in% row.names(topRIN)[1:50])
-# Check with PCA
 myPca <- prcomp(t(exprs(eset.ofc)[topranked,]))
 
 # Plot first factor of interest
@@ -341,8 +356,8 @@ plot(PC2 ~ PC1, data=tmpPCAData, col=c("black", "red")[pData(eset.ofc)[,"fetal"]
 legend("top", inset=.05, title="", legend=levels(pData(eset.ofc)[,"fetal"]), fill=c('black', 'red'), horiz=FALSE)
 ```
 
-### RUV
-The two steps of RUV-2 are: 1) perform factor analysis on the negative control genes to infer the unwanted factors, and 2) perform a simple linear regression of the observed expression levels on the factor of interest. Since we don't really have a healthy mix of PMI and RIN among the patients within each stage, try RUV with just a two group comparison (fetal versus postnatal). We will use the top RIN genes as our negative control genes.
+### RUV with Brainspan negative controls
+We ran the RUV starter analysis as we had done previously, this time using the Brainspan negative controls rather than the housekeeping genes. Since we don't really have a healthy mix of PMI and RIN among the patients within each stage, we also changed our primary variable from continous (Stage) to a two-group comparison (Fetal vs. Postnatal).
 
 ```{r setup-for-RUV, echo=TRUE}
 
@@ -375,9 +390,15 @@ ruv_starter_analysis(Y, X, ctl, geneinfo = t(geneinfo), kset=c(10:15), do_ruv4 =
 ```
 
 ### Results and interpretation
-Based on the results from the starter analysis we can evaluate the diagnostic plots to determine how well our negative control genes worked. We will reference a few key figures below but the full report can be found [here](./ruv/index.html). 
+The RUV starter analysis produces diagnostic plots to determine how well our negative control genes worked. We will reference a few key figures below but the full report can be found [here](./ruv_negctl_full/index.html). The plots look better than those produced with the  housekeeping genes, but still not ideal. The relative log expression (RLE) plots, are boxplots of expression within each sample. Below you see that while the plots for the whole expression data stay fairly constant (left plot), the expression for control genes is quite variable (right plot. This demonstrates that the gene set is not just a random sample from the array.
 
-The cancor plots are mainly useful for giving you a sense of what's going on in the data, and giving you some circumstantial evidence. This plot shows, for each value of K, the square of the first canonical correlation between X and the first K left singular values of Y (black) and Ynegctl (green). It seems at lower K ( < 10 ) is where we see the green curve stay low while the black line jumps up. This indicates that at lower K the negative controls are _less_correlated_ with X (Stage; our primary variable of interest). Whether this means that they are relatively _uninfluenced_ by X is not conclusive.
+```{r rle-plot, fig.align='center', echo=FALSE}
+imgrle_Y <- readPNG("./ruv_negctl_full/general/rle/rleY.png")
+imgrle_Yc <- readPNG("./ruv_negctl_full/general/rle/rleYc.png")
+grid.arrange(rasterGrob(imgrle_Y), rasterGrob(imgrle_Yc), ncol=2)
+```
+
+The cancor plots are mainly useful for giving you a sense of what's going on in the data, and giving you some circumstantial evidence. This plot shows, for each value of K (number of surrogate variables to consider), the square of the first canonical correlation between X (Stage; our primary variable of interest) and the first K left singular values of Y (black) and Ynegctl (green). It seems at lower K ( < 10 ) is where we see the green curve stay low while the black line jumps up. This indicates that at lower K the negative controls are _less correlated_ with X. Whether this means that they are relatively _uninfluenced by X is not conclusive_.
 
 The cancor^2 of about 0.7 is, by absolute standards, very high. So while our procedure for selecting negative controls helped a bit, they are in fact still quite influenced by X. There's another possible explanation, which is that the negative controls are good, and aren't influenced by X, and the only reason they are correlated with X is because the unwanted variation is itself highly correlated with X.  
 
@@ -386,15 +407,16 @@ imgcancor <- readPNG("./ruv_negctl_full/general/cancor/cancor.png")
 grid.raster(imgcancor)
 ```
 
-## Next steps                                 
-* Do we have reason to think that the unwanted variation is highy correlated with X? This is possible if there is very strong confounding between W and X. RIN values correlate with X at 0.5. How high is high?
-* Another method for finding negative control genes is to use genes correlated woth RIN but _not_ correlated with Stage
+### Considerations                               
+* RUV may not be able to remove the confounding effects if the unwanted variation is highy correlated with our primary variable of interest. RIN values correlate with X at 0.5. How high is high?
+* Another method for finding negative control genes is to use genes correlated with RIN but _not_ correlated with Stage. Is there anything _not_ correlated with Stage?
 * Incorporate positive control genes
 * Try RUV-4.  RUV-2 is pretty sensitive to "bad" negative controls. As for RUV-4, I'd say stick to K=1 or 2, at least for now.
 
 
 ```{r ruv-2, echo=FALSE, eval=FALSE}
 
+## This code can be run once an appropriate K has been determined. From the RUV-2 run we can remove the effects of surrogate variables to get 'cleaned' data for use in downstream analysis 
 # RUV-2
 ruv.10 <- RUV2(Y, X, ctl, k=10, Z = 1, v = NULL, fullW = NULL, inputcheck = TRUE)
 
